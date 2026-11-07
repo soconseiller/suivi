@@ -337,7 +337,10 @@
     try {
       S.data = await api('boot');
       $('#app').hidden = false;
-      if (!location.hash || location.hash === '#') {
+      // À chaque ouverture : le tableau de bord. Seuls les boutons des mails ouvrent directement la bonne page.
+      const depuisMail = /[?&]depuis=mail/.test(location.search);
+      if (depuisMail) history.replaceState(null, '', location.pathname + location.hash);
+      if (!depuisMail && location.hash !== '#/' ) {
         location.hash = '#/';
       } else {
         afficher();
@@ -563,6 +566,8 @@
       stat('#/relances', c.relances, 'Devis en attente', c.relancesDues, 'à relancer') +
       stat('#/commandes', c.materiel, 'Matériel à commander', c.materielRetard, 'en retard') +
       stat('#/commandes', c.demandes, 'Matériel demandé', c.demandesRetard, 'en attente') +
+      '<a class="stat' + (totalNonLus() ? ' alert' : '') + '" href="#/terrain"><div class="n">' + totalNonLus() + '</div><div class="l">Messages non lus</div>' +
+      (totalNonLus() ? '<div class="late">' + Object.keys(S.data.nonLus || {}).length + ' chantier(s)</div>' : '<div class="ok">à jour</div>') + '</a>' +
       stat('#/planning', c.enCours, 'Chantiers en cours', c.aPlanifier, 'à planifier') +
       stat('#/facturer', c.factures, 'Factures à faire', c.factures, 'en attente') +
       '</div>' +
@@ -1193,7 +1198,7 @@
     const der = S.data.derniersMessages || {};
     const ids = Object.keys(S.data.nonLus || {}).filter((id) => parId(id))
       .sort((a, b) => ((der[b] || {}).date || '') < ((der[a] || {}).date || '') ? -1 : 1);
-    if (!ids.length) return '';
+    if (!ids.length) return '<div class="card carte-messages vide" style="margin-top:16px"><h2>💬 Nouveaux messages</h2><p class="muted small" style="margin:0">Aucun nouveau message dans les chantiers.</p></div>';
     const lien = (id) => estAdmin() ? '#/dossier/' + id : '#/terrain/' + id;
     return '<div class="card carte-messages" style="margin-top:16px"><h2>💬 Nouveaux messages <span class="pill msg">' + totalNonLus() + '</span></h2><div class="list">' +
       ids.map((id) => {
