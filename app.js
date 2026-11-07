@@ -893,7 +893,9 @@
     return list.map((c) => {
       const mien = c.auteurEmail && c.auteurEmail === moi();
       const peut = mien || estAdmin();
-      return '<div class="bulle' + (mien ? ' moi' : '') + '"><div class="qui"><span><strong>' + esc(c.auteur) + '</strong> · ' + fr(c.date, true) + '</span>' +
+      const type = c.photo ? 'photo' : c.fichier ? 'document' : 'message';
+      return '<div class="bulle' + (mien ? ' moi' : '') + '" data-type="' + type + '" data-auteur="' + esc(c.auteur) + '" data-date="' + esc(String(c.date).slice(0, 10)) +
+        '" data-texte="' + esc(sansAccent([c.texte, c.nomFichier, c.auteur].join(' '))) + '"><div class="qui"><span><strong>' + esc(c.auteur) + '</strong> · ' + fr(c.date, true) + '</span>' +
         (peut ? '<span>' + (c.texte ? '<button class="link" data-act="modifCom" data-id="' + c.id + '">modifier</button> · ' : '') +
           '<button class="link danger" data-act="supprCom" data-id="' + c.id + '">supprimer</button></span>' : '') + '</div>' +
         (c.texte ? '<p>' + esc(c.texte) + '</p>' : '') +
@@ -903,8 +905,43 @@
         '</div>';
     }).join('');
   }
+  /** Applique la recherche de la discussion (mots, type, auteur, dates) */
+  function filtrerChat() {
+    const chat = $('#chat');
+    if (!chat) return;
+    const f = {};
+    document.querySelectorAll('[data-chatfiltre]').forEach((x) => { f[x.dataset.chatfiltre] = x.value; });
+    const mots = motsDe(f.q || '');
+    const actif = mots.length || f.type || f.auteur || f.du || f.au;
+    let n = 0, total = 0;
+    chat.querySelectorAll('.bulle').forEach((b) => {
+      total++;
+      const ok = (!mots.length || mots.every((m) => b.dataset.texte.indexOf(m) >= 0)) &&
+        (!f.type || b.dataset.type === f.type) && (!f.auteur || b.dataset.auteur === f.auteur) &&
+        (!f.du || b.dataset.date >= f.du) && (!f.au || b.dataset.date <= f.au);
+      b.hidden = !ok;
+      if (ok) n++;
+    });
+    const compte = $('#chat-compte');
+    if (compte) compte.textContent = actif ? n + ' sur ' + total + ' trouvé' + (n > 1 ? 's' : '') : '';
+    // Garde la recherche en mémoire tant qu'on reste sur l'appli
+    S.chatFiltre = Object.assign({ ouvert: !!(document.querySelector('.chat-filtres') || {}).open }, f);
+  }
+
   function blocDiscussion(d, list) {
-    return '<div class="chat" id="chat" data-id="' + d.id + '" data-der="' + esc(list.length ? list[list.length - 1].id : '') + '">' + bulles(list) + '</div>' +
+    const auteurs = Array.from(new Set(list.map((c) => c.auteur).filter(Boolean))).sort();
+    const recherche = list.length > 2 ? '<details class="chat-filtres"' + (S.chatFiltre && S.chatFiltre.ouvert ? ' open' : '') + '><summary>🔍 Rechercher dans la discussion</summary>' +
+      '<div class="chat-filtres-corps">' +
+      '<input type="search" data-chatfiltre="q" placeholder="Un ou plusieurs mots…" aria-label="Mots à chercher" autocomplete="off">' +
+      '<div class="row2"><select data-chatfiltre="type" aria-label="Type"><option value="">Tout</option><option value="message">Messages</option><option value="photo">Photos</option><option value="document">Documents</option></select>' +
+      '<select data-chatfiltre="auteur" aria-label="Auteur"><option value="">Toutes les personnes</option>' + auteurs.map((a) => '<option>' + esc(a) + '</option>').join('') + '</select></div>' +
+      '<div class="row2"><label class="field" style="margin:0"><span class="small muted" style="font-weight:400">Du</span><input type="date" data-chatfiltre="du"></label>' +
+      '<label class="field" style="margin:0"><span class="small muted" style="font-weight:400">Au</span><input type="date" data-chatfiltre="au"></label></div>' +
+      '<div class="actions" style="align-items:center"><span class="muted small" id="chat-compte"></span><button type="button" class="link" data-chatreset>Effacer la recherche</button></div>' +
+      '</div></details>' : '';
+    return recherche + '<div class="chat" id="chat" data-id="' + d.id + '" data-der="' + esc(list.length ? list[list.length - 1].id : '') + '">' + bulles(list) + '</div>' +
+      (list.length > 3 ? '<div class="chat-nav"><button type="button" class="link" data-chatscroll="haut">↑ Premiers messages</button>' +
+        '<button type="button" class="link" data-chatscroll="bas">↓ Derniers messages</button></div>' : '') +
       '<div class="chat-saisie"><textarea id="com-txt" rows="2" placeholder="Votre message… (pour dicter, touchez le micro du clavier)" aria-label="Message"></textarea>' +
       '<button class="btn primary" data-act="ajoutCom" data-id="' + d.id + '">Envoyer</button></div>' +
       '<div class="chat-outils"><label class="btn small">📷 Photo<input type="file" accept="image/*" capture="environment" hidden data-upload="chat" data-dossier="' + d.id + '"></label>' +
@@ -2216,6 +2253,11 @@
     clearInterval(S.chatTimer);
     if (chat) {
       chat.scrollTop = chat.scrollHeight;
+      if (S.chatFiltre && S.chatFiltre.dossier === chat.dataset.id) {
+        document.querySelectorAll('[data-chatfiltre]').forEach((x) => { x.value = S.chatFiltre[x.dataset.chatfiltre] || ''; });
+      } else S.chatFiltre = null;
+      filtrerChat();
+      if (S.chatFiltre) S.chatFiltre.dossier = chat.dataset.id;
       // Nouveaux messages de l'équipe : vérification toutes les 30 secondes tant que la page est ouverte
       S.chatTimer = setInterval(async () => {
         const c = $('#chat');
@@ -2227,6 +2269,7 @@
           if (der === c.dataset.der) return;
           S.dossier = det;
           c.innerHTML = bulles(list);
+          filtrerChat();
           c.dataset.der = der;
           c.scrollTop = c.scrollHeight;
         } catch (e) { /* on réessaiera au prochain passage */ }
@@ -2284,6 +2327,18 @@
     const b = ev.target.closest('[data-tout]');
     if (!b) return;
     b.closest('tr').querySelectorAll('input[type=checkbox]').forEach((x) => { x.checked = b.dataset.tout === '1'; });
+  });
+  document.addEventListener('input', (ev) => { if (ev.target.matches('[data-chatfiltre]')) filtrerChat(); });
+  document.addEventListener('change', (ev) => { if (ev.target.matches('[data-chatfiltre]')) filtrerChat(); });
+  document.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-chatscroll]');
+    const c = $('#chat');
+    if (b && c) c.scrollTo({ top: b.dataset.chatscroll === 'haut' ? 0 : c.scrollHeight, behavior: 'smooth' });
+  });
+  document.addEventListener('click', (ev) => {
+    if (!ev.target.closest('[data-chatreset]')) return;
+    document.querySelectorAll('[data-chatfiltre]').forEach((x) => { x.value = ''; });
+    filtrerChat();
   });
   document.addEventListener('input', (ev) => {
     const t = ev.target;
