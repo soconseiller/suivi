@@ -387,7 +387,11 @@ table.equipe td.jour { min-width: 92px; font-size: 13px; }
 
 /* Temps du chantier */
 .temps { margin: 12px 0 4px; padding: 12px; background: var(--bg); border-radius: 8px; }
-.temps-ligne { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; font-size: 14px; margin-bottom: 6px; }
+.temps-ligne { display: grid; grid-template-columns: 165px 1fr auto; gap: 10px; align-items: center; font-size: 14px; margin-bottom: 6px; }
 .temps-barre { height: 8px; background: #E1E3EE; border-radius: 999px; overflow: hidden; }
 .temps-barre > span { display: block; height: 100%; border-radius: 999px; }
 @media (max-width: 860px) { .temps-ligne { grid-template-columns: 1fr auto; } .temps-barre { grid-column: 1 / -1; grid-row: 2; } }
+
+.lieu-temps { display: grid; grid-template-columns: 1fr 110px; gap: 8px; margin-top: 6px; }
+.lieu-temps:has(input[hidden]) { grid-template-columns: 1fr; }
+.temps-equipe .mini-list li { padding: 6px 0; }
