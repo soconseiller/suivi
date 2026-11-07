@@ -202,6 +202,14 @@
     return !String(S.data.reglages.joursNonTravailles || '').split(',').map((x) => x.trim()).filter(Boolean)
       .some((x) => { const p = x.split('/'); return iso >= p[0].trim() && iso <= (p[1] || p[0]).trim(); });
   }
+  /** Périodes du chantier ; pour un ancien planning (dates seulement), une période déduite des dates */
+  function blocPeriodes(d) {
+    const its = interventionsDe(d.id);
+    if (its.length) return listeInterventions(its);
+    if (!d.dateDebut) return '<p class="muted" style="margin:0">Pas encore planifié.</p>';
+    return listeInterventions([{ date: d.dateDebut, dateFin: d.dateFin || d.dateDebut, creneau: 'journee', creneauFin: 'journee', techniciens: d.techniciens || '', travaux: '' }]) +
+      (estAdmin() && ouvert(d) ? '<p class="small muted" style="margin:6px 0 0">Planning sans détail des périodes. <button class="link" data-act="planifier" data-id="' + d.id + '">Détailler les périodes et les techniciens</button></p>' : '');
+  }
   function listeInterventions(its) {
     return '<ul class="mini-list interv">' + its.map((x) => {
       const j = joursPeriode(x);
@@ -850,7 +858,7 @@
       '<div class="card"><h2>Localisation</h2>' + blocLocalisation(d) + '</div>' +
       '<div class="card"><h2>Chantier' + (d.dateValidation && ouvert(d) ? ' <button class="btn ghost" data-act="planifier" data-id="' + d.id + '">' + (d.dateDebut ? 'Modifier' : 'Planifier') + '</button>' : '') + '</h2>' +
       (d.dateDebut ? '<div class="small muted" style="margin:0 0 4px;font-weight:600">Périodes planifiées</div>' +
-        (interventionsDe(d.id).length ? listeInterventions(interventionsDe(d.id)) : '<p class="small">Dates : ' + datesChantier(d) + '</p>') +
+        blocPeriodes(d) +
         kv([
           ['Technicien(s)', (d.techniciens || '').split(',').filter(Boolean).map((e) => esc(nomUser(e)) + ' ' + btnWhatsApp(e, 'Chantier ' + nomChantier(d) + ' : ')).join('<br>')],
           ['Terminé le', fr(d.dateFinChantier)]
@@ -1151,8 +1159,7 @@
       '<div class="page-head"><div><h1>' + esc(nomChantier(d)) + '</h1><p>' + esc(nomClient(d)) +
       (techs.length ? ' · ' + techs.map((e) => esc(prenom(e))).join(', ') : '') + '</p></div>' +
       (estAdmin() ? '<div class="actions"><a class="btn" href="#/dossier/' + d.id + '">Fiche complète</a></div>' : '') + '</div>' +
-      '<div class="card"><h2>Périodes planifiées</h2>' + (interventionsDe(d.id).length ? listeInterventions(interventionsDe(d.id))
-        : '<p class="muted" style="margin:0">' + (d.dateDebut ? 'Dates : ' + datesChantier(d) : 'Pas encore planifié.') + '</p>') + '</div>' +
+      '<div class="card"><h2>Périodes planifiées</h2>' + blocPeriodes(d) + '</div>' +
       '<div class="card"><h2>Localisation</h2>' + blocLocalisation(d) + '</div>' +
       '<div class="card"><h2>Avancement</h2><div class="slider-box"><div class="pct" id="pct-val">' + pct + ' %</div>' +
       '<input type="range" min="0" max="100" step="5" value="' + pct + '" id="pct" aria-label="Avancement du chantier en pourcentage"' + (fini ? ' disabled' : '') + '></div>' +
