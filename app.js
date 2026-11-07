@@ -338,7 +338,7 @@
       S.data = await api('boot');
       $('#app').hidden = false;
       if (!location.hash || location.hash === '#') {
-        location.hash = S.data.user.role === 'admin' ? '#/' : '#/journee';
+        location.hash = '#/';
       } else {
         afficher();
       }
@@ -385,10 +385,9 @@
     const marque = '<div class="nav-brand"><img src="logo.png" alt="Elec Habitat – Julien Larroudé"></div>';
     if (!estAdmin()) {
       $('#nav').innerHTML = marque + '<div class="nav-role">Technicien</div>' +
+        lien('#/', 'Tableau de bord', totalNonLus(), true) +
         lien('#/journee', 'Ma journée', c.jourNonDeclare ? '!' : '', true) +
-        lien('#/terrain', 'Chantiers', totalNonLus(), true) +
-        lien('#/conges', 'Mes absences') +
-        lien('#/trajets', 'Mes trajets') + pied;
+        lien('#/conges', 'Mes absences') + pied;
       return;
     }
     $('#nav').innerHTML = marque +
@@ -425,7 +424,7 @@
     try {
       let html;
       switch (parts[0] || '') {
-        case '': html = estAdmin() ? vueAccueil() : vueJournee(); break;
+        case '': html = estAdmin() ? vueAccueil() : vueTableauTech(); break;
         case 'devis': case 'relances': case 'commandes': case 'planning': case 'facturer': case 'archives':
           if (!estAdmin()) { html = '<div class="empty">Réservé à l\'administrateur. <a href="#/terrain">Voir les chantiers</a></div>'; break; }
           html = { devis: vueDevis, relances: vueRelances, commandes: vueCommandes, planning: vuePlanning, facturer: vueFacturer, archives: vueArchives }[parts[0]]();
@@ -433,7 +432,7 @@
         case 'reglages': html = estAdmin() ? vueReglages() : '<div class="empty">Réservé à l\'administrateur.</div>'; break;
         case 'journee': html = vueJournee(parts[1], parts[2] ? decodeURIComponent(parts[2]) : ''); break;
         case 'conges': html = vueConges(); break;
-        case 'trajets': html = vueTrajets(); break;
+        case 'trajets': html = estAdmin() ? vueTrajets() : '<div class="empty">Réservé à l\'administrateur.</div>'; break;
         case 'equipe': html = estAdmin() ? vueEquipe(parts[1]) : '<div class="empty">Réservé à l\'administrateur.</div>'; break;
         case 'agenda': html = estAdmin() ? vueAgenda() : '<div class="empty">Réservé à l\'administrateur.</div>'; break;
         case 'terrain':
@@ -458,6 +457,7 @@
     S.dossier = await api('dossier', { id: id });
     // Ouvrir le chantier = messages lus
     if (S.data.nonLus && S.data.nonLus[id]) { delete S.data.nonLus[id]; dessinerMenu(routeActuelle()); }
+    if (S.data.derniersMessages) delete S.data.derniersMessages[id];
   }
   const routeActuelle = () => '#/' + ((location.hash.replace(/^#\/?/, '').split('/')[0]) || '');
   const totalNonLus = () => Object.keys(S.data.nonLus || {}).reduce((t, k) => t + S.data.nonLus[k], 0);
@@ -472,10 +472,17 @@
     if (!S.data || document.hidden || $('#modal').open) return;
     try {
       const b = await api('boot');
+      const avant = totalNonLus();
       S.data.nonLus = b.nonLus;
+      S.data.derniersMessages = b.derniersMessages;
       const id = (location.hash.match(/^#\/(?:dossier|terrain)\/([^/]+)/) || [])[1];
-      if (id) delete S.data.nonLus[id];
+      if (id) { delete S.data.nonLus[id]; delete (S.data.derniersMessages || {})[id]; }
       dessinerMenu(routeActuelle());
+      // Nouveau message reçu pendant qu'on regarde le tableau de bord : on le met à jour et on prévient
+      if (totalNonLus() > avant) {
+        toast('💬 Nouveau message sur un chantier');
+        if (routeActuelle() === '#/' && !document.activeElement.matches('input, textarea, select')) await afficher();
+      }
     } catch (e) { /* on réessaiera */ }
   }, 120000);
 
@@ -1064,13 +1071,71 @@
       (autres.length ? '<h2 class="section-title">' + (miens.length ? 'Autres chantiers' : 'Chantiers planifiés') + '</h2>' + autres.map(carte).join('') : '');
   }
 
+  /** Tableau de bord du technicien : recherche, chiffres, chantiers du jour, tous les chantiers en cours */
+  function vueTableauTech() {
+    const t = today();
+    const enCours = S.data.dossiers.filter((d) => ouvert(d) && (['planifie', 'en_cours'].indexOf(d.etape) >= 0 || (d.dateDebut && ['commande', 'materiel'].indexOf(d.etape) >= 0)));
+    const termines = S.data.dossiers.filter((d) => d.etape === 'termine');
+    const aLui = (d) => (d.techniciens || '').split(',').indexOf(moi()) >= 0;
+    const auJour = (d) => interventionsDe(d.id).some((x) => joursPeriode(x).some((j) => j.date === t));
+    const tri = (a, b) => (auJour(b) - auJour(a)) || (aLui(b) - aLui(a)) || ((a.dateDebut || 'z') < (b.dateDebut || 'z') ? -1 : 1);
+    const ajd = enCours.filter((d) => auJour(d) && aLui(d));
+    const nonLus = totalNonLus();
+    const demandes = S.data.commandes.filter((c) => !passee(c) && c.demandePar === (S.data.user.nom || S.data.user.email)).length;
+    const p = pointageDe(moi(), t);
+    const carte = (d) => {
+      const techs = (d.techniciens || '').split(',').filter(Boolean);
+      const texte = sansAccent([nomChantier(d), nomClient(d), d.lieu, d.numCommande, d.numDevis, techs.map(nomUser).join(' ')].join(' '));
+      const filtres = [aLui(d) ? 'miens' : '', auJour(d) ? 'jour' : '', (S.data.nonLus || {})[d.id] ? 'messages' : '', d.etape === 'termine' ? 'termines' : 'encours'].join(' ');
+      return '<a class="terrain-card" href="#/terrain/' + d.id + '" data-texte="' + esc(texte) + '" data-filtres="' + filtres + '">' +
+        '<div class="t">' + esc(nomChantier(d)) + (auJour(d) ? ' <span class="pill orange">Aujourd\'hui</span>' : '') + '</div>' +
+        '<div class="when">' + esc(nomClient(d)) + (d.lieu ? ' · ' + esc(d.lieu) : '') + '</div>' +
+        '<div class="when">' + (d.etape === 'termine' ? 'Terminé ' + fr(d.dateFinChantier) : (datesChantier(d) || 'date à définir')) +
+        (techs.length ? ' · ' + techs.map((e) => esc(prenom(e))).join(', ') : '') + '</div>' +
+        '<div style="margin:-4px 0 10px">' + pillMessages(d.id) + ' ' + pillZone(d.zone, d.distanceKm) + '</div>' +
+        '<div class="progress-line"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div></a>';
+    };
+    const tuile = (n, lib, filtre, alerte) => (filtre ? '<button type="button" data-techfiltre="' + filtre + '"' : '<div') + ' class="stat' + (alerte && n ? ' alert' : '') + '">' +
+      '<div class="n">' + n + '</div><div class="l">' + lib + '</div>' + (filtre ? '</button>' : '</div>');
+    return '<div class="page-head"><div><h1>Bonjour ' + esc(prenom(moi())) + '</h1><p>' + fr(t, true) + '</p></div></div>' +
+      (!p && jourTravaille(t) && !congeDuJour(moi(), t) ? '<a class="note-orange" href="#/journee" style="display:block;text-decoration:none">📋 Ta journée n\'est pas encore déclarée. <strong>La remplir</strong></a>' : '') +
+      carteMessages() + '<div style="height:16px"></div>' +
+      '<div class="loupe" style="margin-bottom:16px"><input type="search" id="tech-q" placeholder="Rechercher un chantier : client, commune, n° de commande…" aria-label="Rechercher un chantier" autocomplete="off" value="' + esc(S.techQ || '') + '"></div>' +
+      '<div class="stats tech" id="tech-tuiles" style="margin-bottom:16px">' +
+      tuile(ajd.length, 'chantier(s) pour moi aujourd\'hui', 'jour', false) +
+      tuile(enCours.filter(aLui).length, 'mes chantiers en cours', 'miens', false) +
+      tuile(nonLus, 'message(s) non lu(s)', 'messages', true) +
+      tuile(demandes, 'demande(s) de matériel en attente', '', false) + '</div>' +
+      '<div class="actions" role="group" aria-label="Filtrer les chantiers" style="margin-bottom:12px" id="tech-filtres">' +
+      [['encours', 'En cours (' + enCours.length + ')'], ['miens', 'Les miens'], ['jour', 'Aujourd\'hui'], ['messages', 'Messages non lus'], ['termines', 'Terminés (' + termines.length + ')']]
+        .map((f) => '<button type="button" class="btn small' + ((S.techFiltre || 'encours') === f[0] ? ' primary' : '') + '" data-techfiltre="' + f[0] + '">' + f[1] + '</button>').join('') + '</div>' +
+      '<div id="tech-liste">' + enCours.slice().sort(tri).map(carte).join('') + termines.map(carte).join('') + '</div>' +
+      '<p class="muted small" id="tech-vide" hidden>Aucun chantier ne correspond.</p>';
+  }
+  function filtrerTech() {
+    const mots = motsDe(S.techQ || '');
+    const f = S.techFiltre || 'encours';
+    let n = 0;
+    document.querySelectorAll('#tech-liste .terrain-card').forEach((c) => {
+      const tags = c.dataset.filtres.split(' ');
+      // La recherche porte sur tous les chantiers, terminés compris
+      const okFiltre = mots.length ? true : f === 'termines' ? tags.indexOf('termines') >= 0
+        : f === 'messages' ? tags.indexOf('messages') >= 0 : tags.indexOf('encours') >= 0 && (f === 'encours' || tags.indexOf(f) >= 0);
+      const ok = okFiltre && mots.every((m) => c.dataset.texte.indexOf(m) >= 0);
+      c.hidden = !ok;
+      if (ok) n++;
+    });
+    const v = $('#tech-vide');
+    if (v) v.hidden = n > 0;
+  }
+
   function vueTerrainChantier() {
     const { dossier: d, commentaires, factures, commandes } = S.dossier;
     const pct = Number(d.avancement) || 0;
     const fini = d.etape === 'termine' || d.etape === 'facture';
     const inter = factures.filter((f) => f.type === 'intermediaire');
     const techs = (d.techniciens || '').split(',').filter(Boolean);
-    return '<a class="back" href="#/terrain">← Chantiers</a>' +
+    return '<a class="back" href="' + (estAdmin() ? '#/terrain">← Chantiers' : '#/">← Tableau de bord') + '</a>' +
       '<div class="page-head"><div><h1>' + esc(nomChantier(d)) + '</h1><p>' + esc(nomClient(d)) +
       (techs.length ? ' · ' + techs.map((e) => esc(prenom(e))).join(', ') : '') + '</p></div>' +
       (estAdmin() ? '<div class="actions"><a class="btn" href="#/dossier/' + d.id + '">Fiche complète</a></div>' : '') + '</div>' +
@@ -1125,10 +1190,18 @@
 
   /** Tableau de bord : chantiers avec des messages non lus */
   function carteMessages() {
-    const ids = Object.keys(S.data.nonLus || {}).filter((id) => parId(id));
+    const der = S.data.derniersMessages || {};
+    const ids = Object.keys(S.data.nonLus || {}).filter((id) => parId(id))
+      .sort((a, b) => ((der[b] || {}).date || '') < ((der[a] || {}).date || '') ? -1 : 1);
     if (!ids.length) return '';
-    return '<div class="card" style="margin-top:16px"><h2>Nouveaux messages</h2><ul class="mini-list">' +
-      ids.map((id) => '<li><a href="#/dossier/' + id + '">' + esc(nomChantier(parId(id))) + '</a>' + pillMessages(id) + '</li>').join('') + '</ul></div>';
+    const lien = (id) => estAdmin() ? '#/dossier/' + id : '#/terrain/' + id;
+    return '<div class="card carte-messages" style="margin-top:16px"><h2>💬 Nouveaux messages <span class="pill msg">' + totalNonLus() + '</span></h2><div class="list">' +
+      ids.map((id) => {
+        const m = der[id] || {};
+        const apercu = m.texte ? esc(m.texte) + (m.texte.length >= 140 ? '…' : '') : m.photo ? '📷 Photo' : m.fichier ? '📎 ' + esc(m.fichier) : '';
+        return '<a class="msg-ligne" href="' + lien(id) + '"><div class="msg-tete"><strong>' + esc(nomChantier(parId(id))) + '</strong>' + pillMessages(id) + '</div>' +
+          (m.auteur ? '<div class="msg-apercu"><span class="muted">' + esc(m.auteur) + ' · ' + fr(m.date, true) + ' :</span> ' + apercu + '</div>' : '') + '</a>';
+      }).join('') + '</div></div>';
   }
 
   function carteEquipeJour() {
@@ -2351,6 +2424,21 @@
       s.oninput = () => resultatsRecherche(s.value);
     }
     if (page === 'journee' || (page === '' && $('#f-journee'))) brancherJournee();
+    if (page === '' && $('#tech-q')) {
+      const q = $('#tech-q');
+      q.oninput = () => { S.techQ = q.value; filtrerTech(); };
+      const choisir = (ev) => {
+        const b = ev.target.closest('[data-techfiltre]');
+        if (!b) return;
+        S.techFiltre = b.dataset.techfiltre;
+        document.querySelectorAll('#tech-filtres [data-techfiltre]').forEach((x) => x.classList.toggle('primary', x.dataset.techfiltre === S.techFiltre));
+        filtrerTech();
+        if (b.closest('#tech-tuiles')) $('#tech-filtres').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+      $('#tech-filtres').onclick = choisir;
+      $('#tech-tuiles').onclick = choisir;
+      filtrerTech();
+    }
     if (page === 'agenda' && $('#f-agenda')) {
       const f = $('#f-agenda');
       f.onsubmit = (ev) => {
