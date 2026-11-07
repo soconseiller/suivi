@@ -61,6 +61,8 @@
     return u ? (u.nom || u.email) : email;
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
+  // À changer en même temps que VERSION_PROGRAMME dans Code.gs
+  const VERSION_ECRANS = '2026-11-07 n°7';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -383,8 +385,11 @@
       '<a href="' + href + '" class="' + (route === href ? 'active' : '') + '">' + label +
       (n ? '<span class="badge' + (late ? ' late' : '') + '">' + n + '</span>' : '') + '</a>';
     const u = S.data.user;
+    const vp = S.data.versionProgramme || 'ancienne';
     const pied = '<div class="nav-user">' + esc(u.nom || u.email) + '<br><button type="button" data-act="logout">Se déconnecter</button>' +
-      '<div style="margin-top:10px;font-size:11px;opacity:.6">par So Conseiller</div></div>';
+      '<div style="margin-top:10px;font-size:11px;opacity:.6">par So Conseiller</div>' +
+      '<div style="margin-top:4px;font-size:11px;opacity:.6' + (vp !== VERSION_ECRANS ? ';color:#FFB27A;opacity:1' : '') + '">Écrans ' + VERSION_ECRANS + '<br>Programme ' + esc(vp) +
+      (vp !== VERSION_ECRANS ? '<br>⚠ versions différentes' : '') + '</div></div>';
     const marque = '<div class="nav-brand"><img src="logo.png" alt="Elec Habitat – Julien Larroudé"></div>';
     if (!estAdmin()) {
       $('#nav').innerHTML = marque + '<div class="nav-role">Technicien</div>' +
