@@ -395,3 +395,8 @@ table.equipe td.jour { min-width: 92px; font-size: 13px; }
 .lieu-temps { display: grid; grid-template-columns: 1fr 110px; gap: 8px; margin-top: 6px; }
 .lieu-temps:has(input[hidden]) { grid-template-columns: 1fr; }
 .temps-equipe .mini-list li { padding: 6px 0; }
+
+/* Messages non lus */
+.pill.msg { background: var(--navy); color: #fff; }
+.chat-nouveaux { display: flex; align-items: center; gap: 10px; color: var(--orange-dark); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+.chat-nouveaux::before, .chat-nouveaux::after { content: ''; flex: 1; height: 1px; background: var(--orange); }
