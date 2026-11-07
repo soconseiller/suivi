@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-07 n°8';
+  const VERSION_ECRANS = '2026-11-07 n°9';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -125,11 +125,21 @@
     return '<span class="zone' + (z === 'GD' ? ' gd' : '') + '">' + (z === 'GD' ? 'Grand déplacement' : 'Zone ' + esc(z)) + '</span>' +
       (km !== undefined && km !== '' ? ' <span class="muted small">' + String(km).replace('.', ',') + ' km</span>' : '');
   }
+  /** Zones du réglage « 1A:5,1B:10,2:20… » → [{ nom, min, max }] (même lecture que le programme Google) */
+  function zonesTrajet() {
+    const out = [];
+    String(S.data.reglages.zones || '1A:5,1B:10,2:20,3:30,4:40,5:50').split(',').forEach((x, i) => {
+      const p = String(x).trim().split(':');
+      if (!p[0]) return;
+      out.push({ nom: p.length > 1 ? p[0].trim().toUpperCase() : String(i + 1), min: out.length ? out[out.length - 1].max : 0, max: Number(String(p.length > 1 ? p[1] : p[0]).trim().replace(',', '.')) });
+    });
+    return out;
+  }
   function libZone(z) {
-    const b = String(S.data.reglages.zones || '10,20,30,40,50').split(',').map(Number);
-    if (z === 'GD') return 'Grand déplacement (plus de ' + b[b.length - 1] + ' km)';
-    const i = Number(z) - 1;
-    return 'Zone ' + z + ' (' + (i ? b[i - 1] : 0) + ' à ' + b[i] + ' km)';
+    const zs = zonesTrajet();
+    if (z === 'GD') return 'Grand déplacement (plus de ' + (zs.length ? zs[zs.length - 1].max : 0) + ' km)';
+    const t = zs.find((x) => x.nom === z);
+    return t ? 'Zone ' + t.nom + ' (' + nb(t.min) + ' à ' + nb(t.max) + ' km)' : 'Zone ' + z;
   }
   /** Lien WhatsApp avec un message déjà écrit (envoi par la personne, gratuit) */
   function lienWhatsApp(tel, texte) {
@@ -1440,7 +1450,8 @@
     const moisCourant = (S.data.pointages || []).filter((p) => p.date >= debutMois && (admin || p.email === moi()));
     const parZone = {};
     moisCourant.forEach((p) => { if (p.statut === 'present' && p.zone) parZone[p.zone] = (parZone[p.zone] || 0) + 1; });
-    const zones = Object.keys(parZone).sort((a, b) => (a === 'GD' ? 1 : b === 'GD' ? -1 : Number(a) - Number(b)));
+    const ordre = zonesTrajet().map((z) => z.nom).concat(['GD']);
+    const zones = Object.keys(parZone).sort((a, b) => ordre.indexOf(a) - ordre.indexOf(b));
     return '<div class="page-head"><div><h1>' + (admin ? 'Trajets' : 'Mes trajets') + '</h1><p>Relevé jour par jour, avec la distance à vol d\'oiseau depuis ' + esc(S.data.reglages.departNom || 'le point de départ') + ' et la zone.</p></div></div>' +
       '<form class="card" id="f-trajets">' +
       (admin ? champ('Technicien', '<select name="email"><option value="">Toute l\'équipe (un PDF, une page par personne)</option>' +
@@ -1602,8 +1613,9 @@
       '<div class="row2"><label class="field"><span>Nom du point de départ</span><input type="text" name="departNom" value="' + esc(r.departNom) + '"><small>Affiché dans l\'appli et sur les PDF.</small></label>' +
       '<label class="field"><span>Adresse du point de départ</span><input type="text" name="departAdresse" value="' + esc(r.departAdresse) + '">' +
       '<small>Position actuelle : ' + esc(r.departLat) + ', ' + esc(r.departLng) + ' (retrouvée à partir de l\'adresse).</small></label></div>' +
-      '<label class="field"><span>Bornes des zones (km)</span><input type="text" name="zones" value="' + esc(r.zones) + '">' +
-      '<small>Séparées par une virgule. Avec 10,20,30,40,50 : zone 1 jusqu\'à 10 km, zone 2 jusqu\'à 20 km… au-delà de 50 km, grand déplacement. Distances à vol d\'oiseau.</small></label>' +
+      '<label class="field"><span>Zones de trajet</span><input type="text" name="zones" value="' + esc(r.zones) + '">' +
+      '<small>Sous la forme <code>nom:km maximum</code>, séparés par des virgules. Actuellement : ' + zonesTrajet().map((z) => esc(libZone(z.nom))).join(' · ') + ' · au-delà : grand déplacement.</small>' +
+      '<small>Distances à vol d\'oiseau depuis le point de départ. Exemple : 1A:5,1B:10,2:20 donne la zone 1A jusqu\'à 5 km, 1B de 5 à 10 km, 2 de 10 à 20 km.</small></label>' +
 
       '<h2 style="margin-top:14px">Documents</h2>' +
       '<label class="field"><span>Types de documents</span><input type="text" name="typesDocs" value="' + esc(r.typesDocs) + '">' +
