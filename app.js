@@ -386,7 +386,7 @@
     if (!estAdmin()) {
       $('#nav').innerHTML = marque + '<div class="nav-role">Technicien</div>' +
         lien('#/journee', 'Ma journée', c.jourNonDeclare ? '!' : '', true) +
-        lien('#/terrain', 'Chantiers') +
+        lien('#/terrain', 'Chantiers', totalNonLus(), true) +
         lien('#/conges', 'Mes absences') +
         lien('#/trajets', 'Mes trajets') + pied;
       return;
@@ -400,7 +400,7 @@
       lien('#/facturer', 'À facturer', c.factures, c.factures) +
       lien('#/archives', 'Archives') +
       '<div class="nav-sep"></div>' +
-      lien('#/terrain', 'Chantiers (vue terrain)') +
+      lien('#/terrain', 'Chantiers (vue terrain)', totalNonLus(), true) +
       lien('#/equipe', 'Équipe et présences') +
       lien('#/conges', 'Congés et absences', c.conges, c.conges) +
       lien('#/trajets', 'Trajets (PDF)') +
@@ -456,7 +456,28 @@
 
   async function chargerDossier(id) {
     S.dossier = await api('dossier', { id: id });
+    // Ouvrir le chantier = messages lus
+    if (S.data.nonLus && S.data.nonLus[id]) { delete S.data.nonLus[id]; dessinerMenu(routeActuelle()); }
   }
+  const routeActuelle = () => '#/' + ((location.hash.replace(/^#\/?/, '').split('/')[0]) || '');
+  const totalNonLus = () => Object.keys(S.data.nonLus || {}).reduce((t, k) => t + S.data.nonLus[k], 0);
+  /** Pastille « nouveaux messages » d'un chantier */
+  const pillMessages = (id) => {
+    const n = (S.data.nonLus || {})[id];
+    return n ? '<span class="pill msg">💬 ' + n + ' nouveau' + (n > 1 ? 'x' : '') + ' message' + (n > 1 ? 's' : '') + '</span>' : '';
+  };
+
+  // Toutes les 2 minutes : nouvelles pastilles de messages (sans recharger la page affichée)
+  setInterval(async () => {
+    if (!S.data || document.hidden || $('#modal').open) return;
+    try {
+      const b = await api('boot');
+      S.data.nonLus = b.nonLus;
+      const id = (location.hash.match(/^#\/(?:dossier|terrain)\/([^/]+)/) || [])[1];
+      if (id) delete S.data.nonLus[id];
+      dessinerMenu(routeActuelle());
+    } catch (e) { /* on réessaiera */ }
+  }, 120000);
 
   async function rafraichir(msg) {
     S.data = await api('boot');
@@ -549,6 +570,7 @@
         '<li><span><a href="#/dossier/' + s.d.id + '">' + esc(nomChantier(s.d)) + '</a> · ' + esc(s.txt) + '</span><span class="muted">' + fr(s.date, true) + '</span></li>').join('') + '</ul>'
         : '<p class="muted">Aucune livraison ni début de chantier prévu.</p>') + '</div>' +
       '</div>' +
+      carteMessages() +
       '<div style="margin-top:16px">' + carteEquipeJour() + '</div>' +
       '<div class="grid three" style="margin-top:16px">' +
       '<div class="card"><h2>Taux de signature</h2><div class="big-rate">' +
@@ -956,13 +978,17 @@
   }
 
   /** Discussion du chantier : messages, photos et documents, visibles par toute l'équipe */
-  function bulles(list) {
+  function bulles(list, vuAvant) {
     if (!list.length) return '<p class="muted" style="margin:0">Pas encore de message. Écrivez le premier !</p>';
+    let repere = false;
     return list.map((c) => {
+      const nouveau = vuAvant && !repere && c.date > vuAvant && c.auteurEmail !== moi();
+      if (nouveau) repere = true;
+      const sep = nouveau ? '<div class="chat-nouveaux" id="chat-nouveaux"><span>Nouveaux messages</span></div>' : '';
       const mien = c.auteurEmail && c.auteurEmail === moi();
       const peut = mien || estAdmin();
       const type = c.photo ? 'photo' : c.fichier ? 'document' : 'message';
-      return '<div class="bulle' + (mien ? ' moi' : '') + '" data-type="' + type + '" data-auteur="' + esc(c.auteur) + '" data-date="' + esc(String(c.date).slice(0, 10)) +
+      return sep + '<div class="bulle' + (mien ? ' moi' : '') + '" data-type="' + type + '" data-auteur="' + esc(c.auteur) + '" data-date="' + esc(String(c.date).slice(0, 10)) +
         '" data-texte="' + esc(sansAccent([c.texte, c.nomFichier, c.auteur].join(' '))) + '"><div class="qui"><span><strong>' + esc(c.auteur) + '</strong> · ' + fr(c.date, true) + '</span>' +
         (peut ? '<span>' + (c.texte ? '<button class="link" data-act="modifCom" data-id="' + c.id + '">modifier</button> · ' : '') +
           '<button class="link danger" data-act="supprCom" data-id="' + c.id + '">supprimer</button></span>' : '') + '</div>' +
@@ -1007,7 +1033,8 @@
       '<label class="field" style="margin:0"><span class="small muted" style="font-weight:400">Au</span><input type="date" data-chatfiltre="au"></label></div>' +
       '<div class="actions" style="align-items:center"><span class="muted small" id="chat-compte"></span><button type="button" class="link" data-chatreset>Effacer la recherche</button></div>' +
       '</div></details>' : '';
-    return recherche + '<div class="chat" id="chat" data-id="' + d.id + '" data-der="' + esc(list.length ? list[list.length - 1].id : '') + '">' + bulles(list) + '</div>' +
+    const vu = S.dossier && S.dossier.dossier.id === d.id ? S.dossier.vuAvant || '' : '';
+    return recherche + '<div class="chat" id="chat" data-id="' + d.id + '" data-vu="' + esc(vu) + '" data-der="' + esc(list.length ? list[list.length - 1].id : '') + '">' + bulles(list, vu) + '</div>' +
       (list.length > 3 ? '<div class="chat-nav"><button type="button" class="link" data-chatscroll="haut">↑ Premiers messages</button>' +
         '<button type="button" class="link" data-chatscroll="bas">↓ Derniers messages</button></div>' : '') +
       '<div class="chat-saisie"><textarea id="com-txt" rows="2" placeholder="Votre message… (pour dicter, touchez le micro du clavier)" aria-label="Message"></textarea>' +
@@ -1029,7 +1056,7 @@
       const dem = S.data.commandes.filter((c) => c.dossierId === d.id && !passee(c)).length;
       return '<a class="terrain-card" href="#/terrain/' + d.id + '"><div class="t">' + esc(nomChantier(d)) + '</div>' +
         '<div class="when">' + (datesChantier(d) || 'date à définir') + (d.lieu ? ' · ' + esc(d.lieu) : '') + '</div>' +
-        (d.zone || dem ? '<div style="margin:-4px 0 10px">' + pillZone(d.zone, d.distanceKm) + (dem ? ' <span class="pill orange">' + dem + ' demande(s) de matériel</span>' : '') + '</div>' : '') +
+        (d.zone || dem || (S.data.nonLus || {})[d.id] ? '<div style="margin:-4px 0 10px">' + pillMessages(d.id) + ' ' + pillZone(d.zone, d.distanceKm) + (dem ? ' <span class="pill orange">' + dem + ' demande(s) de matériel</span>' : '') + '</div>' : '') +
         '<div class="progress-line"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div></a>';
     };
     return '<div class="page-head"><div><h1>Chantiers</h1><p>Touchez un chantier pour l\'avancement, la discussion, le matériel et les documents.</p></div></div>' +
@@ -1094,6 +1121,14 @@
     const d = new Date(p[0], p[1] - 1, p[2], 12);
     const n = (d.getDay() + 6) % 7;
     return addDays(iso, -n);
+  }
+
+  /** Tableau de bord : chantiers avec des messages non lus */
+  function carteMessages() {
+    const ids = Object.keys(S.data.nonLus || {}).filter((id) => parId(id));
+    if (!ids.length) return '';
+    return '<div class="card" style="margin-top:16px"><h2>Nouveaux messages</h2><ul class="mini-list">' +
+      ids.map((id) => '<li><a href="#/dossier/' + id + '">' + esc(nomChantier(parId(id))) + '</a>' + pillMessages(id) + '</li>').join('') + '</ul></div>';
   }
 
   function carteEquipeJour() {
@@ -1404,9 +1439,10 @@
     presence: 'Envoyé à chaque technicien qui n\'a pas encore rempli sa journée. Pas d\'envoi s\'il est en congé ou en absence validée ce jour-là.',
     conge_demande: 'Envoyé tout de suite quand un technicien demande une absence.',
     conge_reponse: 'Envoyé au technicien quand sa demande est acceptée ou refusée. La phrase sur le solde CI BTP peut être ajoutée avec {phrase_conges}.',
+    nouveau_message: 'Envoyé quand quelqu\'un écrit, envoie une photo ou un document dans la discussion d\'un chantier. Les administrateurs sont toujours prévenus ; cochez la case du bas pour prévenir aussi les techniciens du chantier et ceux qui ont déjà participé à la discussion. L\'auteur du message ne reçoit rien, et chacun reçoit au plus un mail par chantier toutes les 15 minutes (la pastille de l\'appli compte tous les messages).',
     agenda_modifie: 'Envoyé quand une intervention a été déplacée ou supprimée directement dans Google Agenda (l\'appli se met à jour toute seule).'
   };
-  const MAILS_IMMEDIATS = ['nouvelle_commande', 'reception_nc', 'pv_reserves', 'conge_demande', 'conge_reponse', 'agenda_modifie'];
+  const MAILS_IMMEDIATS = ['nouvelle_commande', 'reception_nc', 'pv_reserves', 'conge_demande', 'conge_reponse', 'agenda_modifie', 'nouveau_message'];
   const MAILS_VERS_TECHNICIEN = ['presence', 'conge_reponse'];
   const LETTRES = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
@@ -1423,7 +1459,7 @@
       const avecDelai = !!LIB_DELAI[k];
       const avecRythme = !immediat && ['livraison', 'recap', 'avancement', 'presence'].indexOf(k) < 0;
       const avecHoraire = !immediat;
-      const avecCopie = ['pv_reserves', 'reception_nc', 'a_facturer', 'facture_inter'].indexOf(k) >= 0;
+      const avecCopie = ['pv_reserves', 'reception_nc', 'a_facturer', 'facture_inter', 'nouveau_message'].indexOf(k) >= 0;
       const versTech = MAILS_VERS_TECHNICIEN.indexOf(k) >= 0;
       const resume = m.active === 'oui'
         ? (avecHoraire ? jours.filter(Boolean).map((j) => LETTRES[Number(j) - 1]).join(' ') + ' à ' + m.heure + ' h' : 'immédiat') + (m.sms === 'oui' && smsOk ? ' + SMS' : '')
@@ -1433,7 +1469,7 @@
         '<label class="check" style="margin:8px 0 14px"><input type="checkbox" name="active"' + (m.active === 'oui' ? ' checked' : '') + '> Mail actif</label>' +
         (versTech ? '<input type="hidden" name="destinataires" value=""><p class="small muted">Envoyé directement au technicien concerné.</p>'
           : '<label class="field"><span>Envoyer à</span><input type="text" name="destinataires" value="' + esc(m.destinataires) + '" placeholder="' + esc(r.emailContact || '') + '">' +
-            '<small>Une ou plusieurs adresses séparées par une virgule. Vide = adresse contact.</small></label>') +
+            '<small>' + (k === 'nouveau_message' ? 'Adresses à prévenir en plus des administrateurs (facultatif).' : 'Une ou plusieurs adresses séparées par une virgule. Vide = adresse contact.') + '</small></label>') +
         (avecDelai || avecRythme ? '<div class="row2">' +
           (avecDelai ? '<label class="field"><span>' + LIB_DELAI[k] + '</span><input type="number" min="0" name="delaiJours" value="' + esc(m.delaiJours) + '"></label>' : '<div></div>') +
           (avecRythme ? '<label class="field"><span>Puis tous les … jours, tant que rien n\'est fait</span><input type="number" min="1" name="rythmeJours" value="' + esc(m.rythmeJours) + '"></label>' : '') +
@@ -1503,7 +1539,7 @@
       '<div class="help">Dans l\'objet et le texte, ces mots entre accolades sont remplacés automatiquement : ' +
       ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'lieu', 'zone', 'fournisseur', 'date_livraison', 'quand', 'reception', 'receptionne_par', 'numero_bl',
         'pv', 'reserves', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'demande_par', 'liste_materiel', 'prenom', 'date', 'technicien', 'motif', 'periode',
-        'decision', 'reponse', 'phrase_conges', 'changement', 'entreprise']
+        'decision', 'reponse', 'phrase_conges', 'changement', 'auteur', 'message', 'entreprise']
         .map((x) => '<code>{' + x + '}</code>').join(' ') + '. Un bouton vers l\'appli est ajouté en bas de chaque mail.</div>' +
       mails + '<button class="btn primary" data-act="saveMails" style="margin-top:6px">Enregistrer les mails</button></div>' +
 
@@ -2356,7 +2392,8 @@
     const chat = $('#chat');
     clearInterval(S.chatTimer);
     if (chat) {
-      chat.scrollTop = chat.scrollHeight;
+      const repere = $('#chat-nouveaux');
+      chat.scrollTop = repere ? repere.offsetTop - chat.offsetTop - 8 : chat.scrollHeight;
       if (S.chatFiltre && S.chatFiltre.dossier === chat.dataset.id) {
         document.querySelectorAll('[data-chatfiltre]').forEach((x) => { x.value = S.chatFiltre[x.dataset.chatfiltre] || ''; });
       } else S.chatFiltre = null;
@@ -2371,8 +2408,8 @@
           const list = det.commentaires || [];
           const der = list.length ? list[list.length - 1].id : '';
           if (der === c.dataset.der) return;
-          S.dossier = det;
-          c.innerHTML = bulles(list);
+          S.dossier = Object.assign(det, { vuAvant: c.dataset.vu });
+          c.innerHTML = bulles(list, c.dataset.vu);
           filtrerChat();
           c.dataset.der = der;
           c.scrollTop = c.scrollHeight;
