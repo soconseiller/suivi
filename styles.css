@@ -98,7 +98,7 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 /* Chiffres du tableau de bord */
-.stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
 .stat { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; text-decoration: none; color: var(--ink); box-shadow: var(--shadow); display: block; }
 .stat:hover { border-color: var(--navy); }
 .stat .n { font-size: 30px; font-weight: 700; color: var(--navy); line-height: 1.1; }
@@ -413,3 +413,7 @@ table.equipe td.jour { min-width: 92px; font-size: 13px; }
 .msg-ligne:hover strong { color: var(--orange-dark); }
 .msg-tete { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .msg-apercu { font-size: 14px; margin-top: 4px; overflow-wrap: anywhere; }
+
+.carte-messages.vide { border-left-color: var(--line); }
+.stat.alert { border-color: var(--orange); }
+.stat.alert .n { color: var(--orange-dark); }
