@@ -2026,9 +2026,10 @@
     adresse: (el) => FORMS.adresse(el.dataset.id),
     position: (el) => essayer(async () => {
       const pos = await maPosition();
+      if (pos.precision > 200 && !confirm('La position est imprécise (environ ' + pos.precision + ' m). L\'enregistrer quand même comme adresse du chantier ?')) return;
       const r = await agir('localiserChantier', { id: el.dataset.id, mode: 'gps', lat: pos.lat, lng: pos.lng });
       const z = r && r.resultat;
-      toast('Position enregistrée (précision ' + pos.precision + ' m)' + (z && z.zone ? ' · ' + (z.zone === 'GD' ? 'grand déplacement' : 'zone ' + z.zone) : ''));
+      toast('Position enregistrée' + (z && z.lieu ? ' : ' + z.lieu : '') + (z && z.zone ? ' · ' + (z.zone === 'GD' ? 'grand déplacement' : 'zone ' + z.zone) : ''));
       await afficher();
     }),
     classerDoc: (el) => FORMS.classerDoc(el.dataset.id),
