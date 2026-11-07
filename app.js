@@ -1123,11 +1123,21 @@
     const cg = congeDuJour(email, date);
     const prevus = chantiersPrevus(email, date);
     const chantiers = S.data.dossiers.filter((d) => ouvert(d) && (['planifie', 'en_cours', 'termine'].indexOf(d.etape) >= 0 || d.dateDebut))
-      .sort((a, b) => ((b.techniciens || '').indexOf(email) >= 0) - ((a.techniciens || '').indexOf(email) >= 0) || (nomChantier(a) < nomChantier(b) ? -1 : 1));
+      .sort((a, b) => (nomChantier(a) < nomChantier(b) ? -1 : 1));
+    // En tête : les chantiers inscrits dans l'agenda ce jour-là (les siens d'abord), puis ses autres chantiers, puis le reste
+    const auJour = (d) => interventionsDe(d.id).some((x) => joursPeriode(x).some((j) => j.date === date));
+    const aLui = (d) => (d.techniciens || '').split(',').indexOf(email) >= 0;
+    const groupeAgenda = chantiers.filter(auJour).sort((a, b) => aLui(b) - aLui(a));
+    const groupeMiens = chantiers.filter((d) => !auJour(d) && aLui(d));
+    const groupeAutres = chantiers.filter((d) => !auJour(d) && !aLui(d));
     let lieux = p && p.statut === 'present' ? lieuxDe(p) : prevus.map((d) => ({ dossierId: d.id }));
     if (!lieux.length) lieux = [{ dossierId: '' }];
+    const opt = (d, sel) => '<option value="' + d.id + '"' + (sel === d.id ? ' selected' : '') + '>' + esc(nomChantier(d)) + (d.lieu ? ' – ' + esc(d.lieu) : '') + '</option>';
+    const groupe = (lib, liste, sel) => liste.length ? '<optgroup label="' + esc(lib) + '">' + liste.map((d) => opt(d, sel)).join('') + '</optgroup>' : '';
     const optionsChantier = (sel) => '<option value="">Choisir un chantier…</option>' +
-      chantiers.map((d) => '<option value="' + d.id + '"' + (sel === d.id ? ' selected' : '') + '>' + esc(nomChantier(d)) + (d.lieu ? ' – ' + esc(d.lieu) : '') + '</option>').join('') +
+      groupe('Dans l\'agenda le ' + fr(date), groupeAgenda, sel) +
+      groupe(estAdmin() && email !== moi() ? 'Ses autres chantiers' : 'Mes autres chantiers', groupeMiens, sel) +
+      groupe('Autres chantiers', groupeAutres, sel) +
       '<option value="__autre">Autre lieu (dépôt, fournisseur…)</option>';
     const ligneLieu = (l) => '<div class="lieu-ligne" data-lieu' + (l.lat && !l.dossierId ? ' data-lat="' + esc(l.lat) + '" data-lng="' + esc(l.lng) + '"' : '') + '>' +
       '<div><select name="lieu_chantier" aria-label="Chantier">' + optionsChantier(l.dossierId || (l.libelle ? '__autre' : '')) + '</select>' +
