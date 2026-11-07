@@ -91,20 +91,31 @@
   /** Bloc « Temps » de la fiche : prévu, planifié dans l'agenda, passé à ce jour */
   function blocTemps(d) {
     const prevu = Number(d.tempsPrevu) || 0, planifie = Number(d.tempsPlanifie) || 0, passe = Number(d.tempsPasse) || 0;
-    if (!prevu && !planifie) return '';
-    const base = Math.max(prevu, planifie, passe) || 1;
+    const declare = Number(d.tempsDeclare) || 0;
+    let techs = [];
+    try { techs = JSON.parse(d.techsDeclares || '[]'); } catch (e) { techs = []; }
+    if (!prevu && !planifie && !declare) return '';
+    // Qui est sur le chantier aujourd'hui (d'après « Ma journée »)
+    const ajd = (S.data.pointages || []).filter((p) => p.date === today() && p.statut === 'present' && lieuxDe(p).some((l) => l.dossierId === d.id));
+    const base = Math.max(prevu, planifie, passe, declare) || 1;
     const barre = (v, couleur, lib) => '<div class="temps-ligne"><span>' + lib + '</span><div class="temps-barre"><span style="width:' + Math.min(100, v / base * 100) + '%;background:' + couleur + '"></span></div><strong>' + (v ? temps(v) : '—') + '</strong></div>';
-    const ecart = prevu && passe ? passe - prevu : null;
+    const reel = Math.max(passe, declare);
+    const ecart = prevu && reel ? reel - prevu : null;
     const nbTech = (d.techniciens || '').split(',').filter(Boolean).length;
     return '<div class="temps">' +
       barre(prevu, '#9AA0C8', 'Prévu' + (d.tempsValeur ? ' <span class="muted small">(' + nb(Number(d.tempsValeur)) + ' ' + LIB_UNITE[d.tempsUnite || 'jour'] + ')</span>' : '')) +
       barre(planifie, 'var(--navy)', 'Planifié') +
-      barre(passe, 'var(--orange)', 'Passé à ce jour') +
+      barre(passe, 'var(--orange)', 'Passé (agenda)') +
+      barre(declare, 'var(--green)', 'Déclaré par l\'équipe') +
       (ecart !== null && ecart > 0 ? '<p class="small" style="margin:6px 0 0;color:var(--red)">Dépassement : ' + temps(ecart) + ' de plus que prévu.</p>'
         : prevu && planifie > prevu ? '<p class="small" style="margin:6px 0 0;color:var(--orange-dark)">Le planning dépasse le temps prévu de ' + temps(planifie - prevu) + '.</p>'
-        : prevu && passe ? '<p class="small muted" style="margin:6px 0 0">Reste ' + temps(Math.max(0, prevu - passe)) + ' sur le temps prévu.</p>' : '') +
-      (nbTech > 1 && passe ? '<p class="small muted" style="margin:4px 0 0">Avec ' + nbTech + ' techniciens : ' + nb(passe * nbTech) + ' h de main-d\'œuvre passées.</p>' : '') +
-      '<p class="small muted" style="margin:6px 0 0">Calculé d\'après l\'agenda, heures de travail seulement (hors week-ends, jours fériés et jours non travaillés).</p></div>';
+        : prevu && reel ? '<p class="small muted" style="margin:6px 0 0">Reste ' + temps(Math.max(0, prevu - reel)) + ' sur le temps prévu.</p>' : '') +
+      (nbTech > 1 && passe ? '<p class="small muted" style="margin:4px 0 0">Avec ' + nbTech + ' techniciens prévus : ' + nb(passe * nbTech) + ' h de main-d\'œuvre d\'après l\'agenda.</p>' : '') +
+      (techs.length ? '<div class="temps-equipe"><div class="small" style="font-weight:600;margin:10px 0 4px">' + techs.length + ' personne' + (techs.length > 1 ? 's' : '') +
+        ' sur le chantier, ' + nb(declare) + ' h au total' + (prevu ? ' (' + Math.round(declare / prevu * 100) + ' % du temps prévu)' : '') + '</div><ul class="mini-list">' +
+        techs.map((t) => '<li><span>' + esc(nomUser(t.email)) + ' <span class="muted small">· ' + t.jours + ' jour' + (t.jours > 1 ? 's' : '') + ', dernier le ' + fr(t.dernier) + '</span></span><strong>' + nb(t.heures) + ' h</strong></li>').join('') + '</ul></div>' : '') +
+      (ajd.length ? '<p class="small" style="margin:6px 0 0"><strong>Aujourd\'hui :</strong> ' + ajd.length + ' personne' + (ajd.length > 1 ? 's' : '') + ' (' + ajd.map((p) => esc(prenom(p.email))).join(', ') + ')</p>' : '') +
+      '<p class="small muted" style="margin:6px 0 0">Planifié et passé : d\'après l\'agenda, heures de travail seulement (hors week-ends, jours fériés et jours non travaillés). Déclaré : d\'après « Ma journée » de chaque technicien.</p></div>';
   }
   /** Zone de trajet : '1', '2'… ou 'GD' */
   function pillZone(z, km) {
@@ -656,6 +667,7 @@
         titre: nomChantier(d),
         meta: [datesChantier(d), esc(nomClient(d)), pillZone(d.zone, d.distanceKm),
           d.tempsPrevu || d.tempsPlanifie ? 'Temps : ' + (d.tempsPasse ? nb(Number(d.tempsPasse)) + ' h passées / ' : '') + (d.tempsPrevu ? nb(Number(d.tempsPrevu)) + ' h prévues' : nb(Number(d.tempsPlanifie)) + ' h planifiées') : '',
+          d.tempsDeclare ? 'Équipe : ' + nb(Number(d.tempsDeclare)) + ' h déclarées' : '',
           d.techniciens ? esc(d.techniciens.split(',').map(nomUser).join(', ')) : 'technicien à choisir', pillEtape(d),
           livraisonsDe(d).length ? (livraisonsDe(d).every((c) => !recepOuverte(c)) ? '<span class="pill green">Matériel reçu</span>'
             : '<span class="pill amber">' + livraisonsDe(d).filter(recepOuverte).length + ' réception(s) en attente</span>') : ''],
@@ -1070,7 +1082,7 @@
   function resumePointage(p) {
     if (!p) return '';
     if (p.statut === 'absent') return '<span class="pill grey">Absent</span> ' + esc(p.motif || '');
-    return '<span class="ok-dot">✓</span> ' + lieuxDe(p).map((l) => esc(l.libelle || '')).join(', ') + ' ' + pillZone(p.zone);
+    return '<span class="ok-dot">✓</span> ' + lieuxDe(p).map((l) => esc(l.libelle || '') + (l.heures ? ' <span class="muted small">' + nb(Number(l.heures)) + ' h</span>' : '')).join(', ') + ' ' + pillZone(p.zone);
   }
   /** Chantiers prévus ce jour-là pour cette personne (planning) */
   function chantiersPrevus(email, date) {
@@ -1119,7 +1131,11 @@
       '<option value="__autre">Autre lieu (dépôt, fournisseur…)</option>';
     const ligneLieu = (l) => '<div class="lieu-ligne" data-lieu' + (l.lat && !l.dossierId ? ' data-lat="' + esc(l.lat) + '" data-lng="' + esc(l.lng) + '"' : '') + '>' +
       '<div><select name="lieu_chantier" aria-label="Chantier">' + optionsChantier(l.dossierId || (l.libelle ? '__autre' : '')) + '</select>' +
-      '<input type="text" name="lieu_adresse" placeholder="Adresse ou commune du lieu" value="' + esc(!l.dossierId ? (l.libelle || '') : '') + '" style="margin-top:6px"' + (l.dossierId || !l.libelle ? ' hidden' : '') + '></div>' +
+      '<input type="text" name="lieu_adresse" placeholder="Adresse ou commune du lieu" value="' + esc(!l.dossierId ? (l.libelle || '') : '') + '" style="margin-top:6px"' + (l.dossierId || !l.libelle ? ' hidden' : '') + '>' +
+      '<div class="lieu-temps"><select name="lieu_temps" aria-label="Temps passé">' +
+      [['journee', 'Toute la journée'], ['matin', 'Le matin'], ['apres_midi', 'L\'après-midi'], ['heures', 'Nombre d\'heures…']]
+        .map((o) => '<option value="' + o[0] + '"' + ((l.temps || 'journee') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
+      '<input type="number" name="lieu_heures" min="0.5" max="14" step="0.5" inputmode="decimal" placeholder="Heures" value="' + esc(l.temps === 'heures' ? l.heures : '') + '"' + (l.temps === 'heures' ? '' : ' hidden') + ' aria-label="Nombre d\'heures"></div></div>' +
       '<button type="button" class="btn ghost danger" data-retirer-lieu aria-label="Retirer ce lieu">✕</button></div>';
     const hist = [];
     for (let i = 0; i < 14; i++) {
@@ -1146,7 +1162,8 @@
       (prevus.length && !p ? '<small style="margin:-2px 0 8px">D\'après le planning : ' + prevus.map((d) => esc(nomChantier(d))).join(', ') + '.</small>' : '') +
       '<div class="lieux" data-lieux>' + lieux.map(ligneLieu).join('') + '</div>' +
       '<div class="actions"><button type="button" class="btn small" data-ajout-lieu>+ Un autre chantier</button>' +
-      '<button type="button" class="btn small" data-ma-position>📍 Utiliser ma position actuelle</button></div></div></div>' +
+      '<button type="button" class="btn small" data-ma-position>📍 Utiliser ma position actuelle</button></div>' +
+      '<small style="margin-top:8px">Pour chaque lieu, indique le temps passé : ça sert à compter les heures de l\'équipe sur chaque chantier.</small></div></div>' +
       '<div data-pane="absent" hidden>' + champ('Motif', '<select name="motif">' + motifsAbsence().map((m) => '<option' + (p && p.motif === m ? ' selected' : '') + '>' + esc(m) + '</option>').join('') + '</select>',
         'Pour des congés à venir, faites plutôt une <a href="#/conges">demande d\'absence</a>.') + '</div>' +
       champ('Commentaire (facultatif)', '<textarea name="commentaire" rows="2" placeholder="Une précision sur la journée…">' + esc(p ? p.commentaire : '') + '</textarea>') +
@@ -1171,6 +1188,12 @@
     maj();
     const zone = f.querySelector('[data-lieux]');
     zone.onchange = (ev) => {
+      if (ev.target.name === 'lieu_temps') {
+        const h = ev.target.closest('[data-lieu]').querySelector('[name=lieu_heures]');
+        h.hidden = ev.target.value !== 'heures';
+        if (!h.hidden) h.focus();
+        return;
+      }
       if (ev.target.name !== 'lieu_chantier') return;
       const l = ev.target.closest('[data-lieu]');
       const adr = l.querySelector('[name=lieu_adresse]');
@@ -1182,11 +1205,20 @@
       const b = ev.target.closest('[data-retirer-lieu]');
       if (b) { b.closest('[data-lieu]').remove(); if (!zone.children.length) zone.insertAdjacentHTML('beforeend', $('#tpl-lieu').innerHTML); }
     };
-    f.querySelector('[data-ajout-lieu]').onclick = () => zone.insertAdjacentHTML('beforeend', $('#tpl-lieu').innerHTML);
+    // Deuxième lieu : on propose matin pour le premier et après-midi pour le second (modifiable)
+    const ajouterLieu = () => {
+      const avant = zone.querySelectorAll('[data-lieu]');
+      zone.insertAdjacentHTML('beforeend', $('#tpl-lieu').innerHTML);
+      if (avant.length === 1 && avant[0].querySelector('[name=lieu_temps]').value === 'journee') {
+        avant[0].querySelector('[name=lieu_temps]').value = 'matin';
+        zone.lastElementChild.querySelector('[name=lieu_temps]').value = 'apres_midi';
+      }
+      return zone.lastElementChild;
+    };
+    f.querySelector('[data-ajout-lieu]').onclick = () => ajouterLieu();
     f.querySelector('[data-ma-position]').onclick = () => essayer(async () => {
       const pos = await maPosition();
-      zone.insertAdjacentHTML('beforeend', $('#tpl-lieu').innerHTML);
-      const l = zone.lastElementChild;
+      const l = ajouterLieu();
       l.dataset.lat = pos.lat; l.dataset.lng = pos.lng;
       l.querySelector('[name=lieu_chantier]').value = '__autre';
       const adr = l.querySelector('[name=lieu_adresse]');
@@ -1200,9 +1232,11 @@
         const lieux = Array.from(zone.querySelectorAll('[data-lieu]')).map((l) => {
           const v = l.querySelector('[name=lieu_chantier]').value;
           const adr = l.querySelector('[name=lieu_adresse]').value.trim();
-          if (v && v !== '__autre') return { dossierId: v };
-          if (l.dataset.lat) return { libelle: adr || 'Position du téléphone', lat: l.dataset.lat, lng: l.dataset.lng };
-          if (adr) return { libelle: adr, adresse: adr };
+          const t = { temps: l.querySelector('[name=lieu_temps]').value, heures: l.querySelector('[name=lieu_heures]').value };
+          if (t.temps === 'heures' && !(Number(String(t.heures).replace(',', '.')) > 0)) throw new Error('Indique le nombre d\'heures passées.');
+          if (v && v !== '__autre') return Object.assign({ dossierId: v }, t);
+          if (l.dataset.lat) return Object.assign({ libelle: adr || 'Position du téléphone', lat: l.dataset.lat, lng: l.dataset.lng }, t);
+          if (adr) return Object.assign({ libelle: adr, adresse: adr }, t);
           return null;
         }).filter(Boolean);
         if (st === 'present' && !lieux.length) throw new Error('Choisis au moins un chantier ou indique un lieu.');
