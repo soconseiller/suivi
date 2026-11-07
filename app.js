@@ -75,6 +75,37 @@
     ? Array.from(new Set((S.data.users || []).filter((u) => u.role !== 'admin' && u.actif !== 'non').flatMap((u) => u.docsEffectifs || [])))
     : (S.data.mesDocs || []);
   const typesPermis = () => estAdmin() ? typesDocs() : typesDocs().filter((t) => typesTech().indexOf(t.cle) >= 0);
+  /** Durée d'une journée de travail en heures, d'après les horaires des réglages */
+  function heuresJour() {
+    const r = S.data.reglages;
+    const m = (x, def) => { const p = String(x || def).split(':').map(Number); return p[0] * 60 + (p[1] || 0); };
+    return ((m(r.matinFin, '12:00') - m(r.matinDebut, '08:00')) + (m(r.apremFin, '17:30') - m(r.apremDebut, '13:30'))) / 60 || 8;
+  }
+  const nb = (x) => String(Math.round(x * 10) / 10).replace('.', ',');
+  /** « 20 h (2,5 j) » */
+  const temps = (h) => (h === '' || h === undefined || h === null) ? '' : nb(Number(h)) + ' h (' + nb(Number(h) / heuresJour()) + ' j)';
+  const LIB_UNITE = { jour: 'jour(s)', demi: 'demi-journée(s)', heure: 'heure(s)' };
+  const champTemps = (valeur, unite) => '<div class="row2">' +
+    champ('Temps prévu pour le chantier', input('tempsValeur', valeur || '', 'number', 'min="0" step="0.5" inputmode="decimal" placeholder="Ex. : 3"')) +
+    champ('Unité', '<select name="tempsUnite">' + Object.keys(LIB_UNITE).map((u) => '<option value="' + u + '"' + ((unite || 'jour') === u ? ' selected' : '') + '>' + LIB_UNITE[u] + '</option>').join('') + '</select>') + '</div>';
+  /** Bloc « Temps » de la fiche : prévu, planifié dans l'agenda, passé à ce jour */
+  function blocTemps(d) {
+    const prevu = Number(d.tempsPrevu) || 0, planifie = Number(d.tempsPlanifie) || 0, passe = Number(d.tempsPasse) || 0;
+    if (!prevu && !planifie) return '';
+    const base = Math.max(prevu, planifie, passe) || 1;
+    const barre = (v, couleur, lib) => '<div class="temps-ligne"><span>' + lib + '</span><div class="temps-barre"><span style="width:' + Math.min(100, v / base * 100) + '%;background:' + couleur + '"></span></div><strong>' + (v ? temps(v) : '—') + '</strong></div>';
+    const ecart = prevu && passe ? passe - prevu : null;
+    const nbTech = (d.techniciens || '').split(',').filter(Boolean).length;
+    return '<div class="temps">' +
+      barre(prevu, '#9AA0C8', 'Prévu' + (d.tempsValeur ? ' <span class="muted small">(' + nb(Number(d.tempsValeur)) + ' ' + LIB_UNITE[d.tempsUnite || 'jour'] + ')</span>' : '')) +
+      barre(planifie, 'var(--navy)', 'Planifié') +
+      barre(passe, 'var(--orange)', 'Passé à ce jour') +
+      (ecart !== null && ecart > 0 ? '<p class="small" style="margin:6px 0 0;color:var(--red)">Dépassement : ' + temps(ecart) + ' de plus que prévu.</p>'
+        : prevu && planifie > prevu ? '<p class="small" style="margin:6px 0 0;color:var(--orange-dark)">Le planning dépasse le temps prévu de ' + temps(planifie - prevu) + '.</p>'
+        : prevu && passe ? '<p class="small muted" style="margin:6px 0 0">Reste ' + temps(Math.max(0, prevu - passe)) + ' sur le temps prévu.</p>' : '') +
+      (nbTech > 1 && passe ? '<p class="small muted" style="margin:4px 0 0">Avec ' + nbTech + ' techniciens : ' + nb(passe * nbTech) + ' h de main-d\'œuvre passées.</p>' : '') +
+      '<p class="small muted" style="margin:6px 0 0">Calculé d\'après l\'agenda, heures de travail seulement (hors week-ends, jours fériés et jours non travaillés).</p></div>';
+  }
   /** Zone de trajet : '1', '2'… ou 'GD' */
   function pillZone(z, km) {
     if (!z) return '';
@@ -137,12 +168,34 @@
     if (its.length) return its.map(libellePeriode).join(' · ');
     return d.dateDebut ? fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : '') : '';
   }
+  /** Jours fériés en France (même calcul que le programme Google) */
+  const FERIES = {};
+  function feries(an) {
+    if (FERIES[an]) return FERIES[an];
+    const a = an % 19, b = Math.floor(an / 100), c = an % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const mois = Math.floor((h + l - 7 * m + 114) / 31), jour = ((h + l - 7 * m + 114) % 31) + 1;
+    const paques = an + '-' + String(mois).padStart(2, '0') + '-' + String(jour).padStart(2, '0');
+    const out = {};
+    ['01-01', '05-01', '05-08', '07-14', '08-15', '11-01', '11-11', '12-25'].forEach((md) => { out[an + '-' + md] = true; });
+    [1, 39, 50].forEach((n) => { out[addDays(paques, n)] = true; });
+    return (FERIES[an] = out);
+  }
+  /** Jour travaillé : ni week-end, ni férié, ni dans les jours non travaillés des réglages */
+  function jourTravaille(iso) {
+    const js = new Date(iso + 'T12:00:00').getDay();
+    if (js === 0 || js === 6 || feries(Number(iso.slice(0, 4)))[iso]) return false;
+    return !String(S.data.reglages.joursNonTravailles || '').split(',').map((x) => x.trim()).filter(Boolean)
+      .some((x) => { const p = x.split('/'); return iso >= p[0].trim() && iso <= (p[1] || p[0]).trim(); });
+  }
   function listeInterventions(its) {
     return '<ul class="mini-list interv">' + its.map((x) => {
       const j = joursPeriode(x);
       const fin = j[j.length - 1].date;
+      const travailles = j.filter((y) => jourTravaille(y.date)).length;
       return '<li style="display:block"><div><strong>' + libellePeriode(x).replace(/^du /, 'Du ') + '</strong>' +
-        (j.length > 1 ? ' <span class="pill grey">' + j.length + ' jours</span>' : '') +
+        (j.length > 1 ? ' <span class="pill grey">' + travailles + ' jour' + (travailles > 1 ? 's' : '') + ' travaillé' + (travailles > 1 ? 's' : '') + '</span>' : '') +
         (fin < today() ? ' <span class="muted small">passée</span>' : '') + '</div>' +
         (x.travaux ? '<div class="small" style="margin-top:4px;white-space:pre-line">' + esc(x.travaux) + '</div>' : '<div class="small muted">Travaux non précisés</div>') +
         '</li>';
@@ -602,6 +655,7 @@
       (planifies.length ? '<div class="list">' + planifies.map((d) => ligne(d, {
         titre: nomChantier(d),
         meta: [datesChantier(d), esc(nomClient(d)), pillZone(d.zone, d.distanceKm),
+          d.tempsPrevu || d.tempsPlanifie ? 'Temps : ' + (d.tempsPasse ? nb(Number(d.tempsPasse)) + ' h passées / ' : '') + (d.tempsPrevu ? nb(Number(d.tempsPrevu)) + ' h prévues' : nb(Number(d.tempsPlanifie)) + ' h planifiées') : '',
           d.techniciens ? esc(d.techniciens.split(',').map(nomUser).join(', ')) : 'technicien à choisir', pillEtape(d),
           livraisonsDe(d).length ? (livraisonsDe(d).every((c) => !recepOuverte(c)) ? '<span class="pill green">Matériel reçu</span>'
             : '<span class="pill amber">' + livraisonsDe(d).filter(recepOuverte).length + ' réception(s) en attente</span>') : ''],
@@ -732,6 +786,8 @@
       '<div class="card"><h2>Devis validé</h2>' + (d.dateValidation ? kv([
         ['Validé le', fr(d.dateValidation)],
         ['N° de commande', d.numCommande ? esc(d.numCommande) : '<span class="pill amber">à saisir</span>'],
+        ['Temps prévu', d.tempsPrevu ? nb(Number(d.tempsValeur)) + ' ' + LIB_UNITE[d.tempsUnite || 'jour'] + ' <span class="muted small">= ' + temps(d.tempsPrevu) + '</span>'
+          : '<button class="link" data-act="modifier" data-id="' + d.id + '">à indiquer</button>'],
         ['Chantier', esc(d.chantier)]
       ]) : '<p class="muted">Devis pas encore validé.</p>') + '</div>' +
       '<div class="card"><h2>Matériel</h2>' +
@@ -743,10 +799,10 @@
       (d.dateDebut ? kv([
         ['Technicien(s)', (d.techniciens || '').split(',').filter(Boolean).map((e) => esc(nomUser(e)) + ' ' + btnWhatsApp(e, 'Chantier ' + nomChantier(d) + ' : ')).join('<br>')],
         ['Terminé le', fr(d.dateFinChantier)]
-      ]) + '<div class="progress-line" style="margin:12px 0 4px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div>' +
+      ]) + blocTemps(d) + '<div class="progress-line" style="margin:12px 0 4px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div>' +
         (interventionsDe(d.id).length ? '<div class="small muted" style="margin:14px 0 4px">Interventions</div>' + listeInterventions(interventionsDe(d.id))
           : '<p class="small muted">Dates : ' + datesChantier(d) + '</p>')
-        : '<p class="muted">Pas encore planifié.</p>') + '</div>' +
+        : '<p class="muted">Pas encore planifié.</p>' + (d.tempsPrevu ? '<p class="small">Temps prévu : <strong>' + temps(d.tempsPrevu) + '</strong></p>' : '')) + '</div>' +
       (['en_cours', 'termine', 'facture'].indexOf(d.etape) >= 0 || d.pvStatut || (S.dossier.documents || []).some((x) => x.type !== 'devis')
         ? '<div class="card"><h2>PV de réception</h2>' + blocPV(d, S.dossier.documents || []) + '</div>' : '') +
       '<div class="card"><h2>Factures</h2>' + (factures.length ? '<ul class="mini-list">' + factures.map((f) =>
@@ -1365,6 +1421,8 @@
       '<label class="field"><span class="small muted" style="font-weight:400">Matin</span><div class="actions"><input type="time" name="matinDebut" value="' + esc(r.matinDebut || '08:00') + '"> à <input type="time" name="matinFin" value="' + esc(r.matinFin || '12:00') + '"></div></label>' +
       '<label class="field"><span class="small muted" style="font-weight:400">Après-midi</span><div class="actions"><input type="time" name="apremDebut" value="' + esc(r.apremDebut || '13:30') + '"> à <input type="time" name="apremFin" value="' + esc(r.apremFin || '17:30') + '"></div></label>' +
       '</div><small>Une journée va du début du matin à la fin de l\'après-midi. Si une intervention est déplacée dans Google Agenda, l\'appli se met à jour dans l\'heure.</small></div>' +
+      '<label class="field"><span>Jours non travaillés</span><input type="text" name="joursNonTravailles" value="' + esc(r.joursNonTravailles || '') + '" placeholder="Ex. : 2026-12-24/2027-01-02, 2027-05-07">' +
+      '<small>En plus des week-ends et des jours fériés (comptés automatiquement). Dates au format AAAA-MM-JJ, ou périodes AAAA-MM-JJ/AAAA-MM-JJ, séparées par une virgule. Ils ne sont pas comptés dans le temps passé sur les chantiers.</small></label>' +
       '<label class="field"><span>Identifiant de l\'agenda</span><input type="text" name="agendaId" value="' + esc(r.agendaId) + '" placeholder="Vide = agenda principal du compte de l\'entreprise"></label>' +
 
       '<h2 style="margin-top:14px">Trajets</h2>' +
@@ -1618,6 +1676,7 @@
           '<div data-pane="refuse" hidden>' + champ('Motif du refus', '<select name="motif">' + motifs.map((m) => '<option>' + esc(m) + '</option>').join('') + '</select>') +
           champ('Commentaire', '<textarea name="commentaire" rows="3"></textarea>') + '</div>' +
           '<div data-pane="valide" hidden>' + champ('Numéro de commande', input('numCommande', ''), 'Celui de votre logiciel de devis. Vous pourrez le saisir plus tard.') +
+          champTemps('', 'jour') +
           '<p class="muted small">Un mail « Nouvelle commande » sera envoyé.</p></div>',
         apres: (form) => {
           const maj = () => {
@@ -1824,7 +1883,8 @@
           champ('Commentaire sur le devis', '<textarea name="commentaireDevis" rows="2">' + esc(d.commentaireDevis) + '</textarea>') +
           '<div class="row2">' + champ('Délai de relance de ce devis (jours)', input('delaiRelance', d.delaiRelance, 'number', 'min="1" placeholder="' + delai('relance_client') + ' par défaut"'), 'Vide = délai général') +
           champ('Prochaine relance', input('prochaineRelance', d.prochaineRelance, 'date')) + '</div>' +
-          champ('Nom du chantier', input('chantier', d.chantier)),
+          champ('Nom du chantier', input('chantier', d.chantier)) +
+          (d.dateValidation ? champTemps(d.tempsValeur, d.tempsUnite) : ''),
         valider: async (v) => {
           await agir('modifierDossier', { id, champs: v }, 'Dossier modifié');
         }
