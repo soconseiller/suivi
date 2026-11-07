@@ -384,3 +384,10 @@ table.equipe td.jour { min-width: 92px; font-size: 13px; }
 .chat-filtres summary { cursor: pointer; font-size: 14px; color: var(--navy); font-weight: 600; padding: 4px 0; }
 .chat-filtres-corps { display: grid; gap: 8px; padding: 10px 0 4px; }
 .bulle[hidden] { display: none; }
+
+/* Temps du chantier */
+.temps { margin: 12px 0 4px; padding: 12px; background: var(--bg); border-radius: 8px; }
+.temps-ligne { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; font-size: 14px; margin-bottom: 6px; }
+.temps-barre { height: 8px; background: #E1E3EE; border-radius: 999px; overflow: hidden; }
+.temps-barre > span { display: block; height: 100%; border-radius: 999px; }
+@media (max-width: 860px) { .temps-ligne { grid-template-columns: 1fr auto; } .temps-barre { grid-column: 1 / -1; grid-row: 2; } }
