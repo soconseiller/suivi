@@ -331,7 +331,7 @@
       lien('#/', 'Tableau de bord') +
       lien('#/devis', 'Devis à faire', c.devis, c.devisRetard) +
       lien('#/relances', 'Relances clients', c.relancesDues || '', c.relancesDues) +
-      lien('#/commandes', 'Commandes', c.materiel + c.demandes + c.receptions, c.materielRetard + c.demandesRetard + c.receptionsRetard) +
+      lien('#/commandes', 'Devis validé', c.materiel + c.demandes + c.receptions, c.materielRetard + c.demandesRetard + c.receptionsRetard) +
       lien('#/planning', 'Planning', c.aPlanifier, false) +
       lien('#/facturer', 'À facturer', c.factures, c.factures) +
       lien('#/archives', 'Archives') +
@@ -560,7 +560,7 @@
         actions: btnRecep(c, mode === 'recep' ? 'primary' : '') + '<button class="btn ghost" data-act="modifCommande" data-id="' + c.id + '">Modifier</button>'
       });
     };
-    return '<div class="page-head"><div><h1>Commandes</h1><p>Matériel à commander, demandes des techniciens, réceptions et livraisons à venir.</p></div></div>' +
+    return '<div class="page-head"><div><h1>Devis validé</h1><p>Matériel à commander, demandes des techniciens, réceptions et livraisons à venir.</p></div></div>' +
       '<h2 class="section-title">Demandes des techniciens (' + demandes.length + ')</h2>' +
       (demandes.length ? '<div class="list">' + demandes.map((c) => {
         const d = parId(c.dossierId);
@@ -673,7 +673,7 @@
     PARCOURS.forEach((e, i) => {
       if (e === 'commande') {
         // Commande client : validée dès que le devis est accepté (le matériel se suit dans les 3 étapes suivantes)
-        etapes.push({ lib: 'Commande', cls: idx >= i ? 'done' : '' });
+        etapes.push({ lib: 'Devis validé', cls: idx >= i ? 'done' : '' });
         return;
       }
       if (e !== 'materiel') {
@@ -710,7 +710,7 @@
 
     const delaiTxt = d.delaiRelance ? d.delaiRelance + ' jours (propre à ce devis)' : delai('relance_client') + ' jours (par défaut)';
 
-    const retour = { devis_a_faire: ['#/devis', 'Devis à faire'], devis_envoye: ['#/relances', 'Relances clients'], commande: ['#/commandes', 'Commandes'], materiel: ['#/planning', 'Planning'], planifie: ['#/planning', 'Planning'], en_cours: ['#/planning', 'Planning'], termine: ['#/facturer', 'À facturer'] }[d.etape] || ['#/archives', 'Archives'];
+    const retour = { devis_a_faire: ['#/devis', 'Devis à faire'], devis_envoye: ['#/relances', 'Relances clients'], commande: ['#/commandes', 'Devis validé'], materiel: ['#/planning', 'Planning'], planifie: ['#/planning', 'Planning'], en_cours: ['#/planning', 'Planning'], termine: ['#/facturer', 'À facturer'] }[d.etape] || ['#/archives', 'Archives'];
     return '<a class="back" href="' + retour[0] + '">← ' + retour[1] + '</a>' +
       '<div class="page-head"><div><h1>' + esc(nomClient(d)) + '</h1><p>' + pillEtape(d) + (d.chantier ? ' · ' + esc(d.chantier) : '') + (d.demo === 'oui' ? ' · <span class="pill grey">démo</span>' : '') + '</p></div>' +
       '<div class="actions">' + actions + '<button class="btn" data-act="modifier" data-id="' + d.id + '">Modifier</button>' + btnRetour(d) + '</div></div>' +
@@ -729,7 +729,7 @@
         ['Refus', d.motifRefus ? esc(d.motifRefus) + (d.commentaireRefus ? ' – ' + esc(d.commentaireRefus) : '') : '']
       ]) : '<p class="muted">Pas encore fait.</p>') +
       blocDocsDevis(d, (S.dossier.documents || []).filter((x) => x.type === 'devis')) + '</div>' +
-      '<div class="card"><h2>Commande client</h2>' + (d.dateValidation ? kv([
+      '<div class="card"><h2>Devis validé</h2>' + (d.dateValidation ? kv([
         ['Validé le', fr(d.dateValidation)],
         ['N° de commande', d.numCommande ? esc(d.numCommande) : '<span class="pill amber">à saisir</span>'],
         ['Chantier', esc(d.chantier)]
