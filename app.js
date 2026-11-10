@@ -1655,8 +1655,75 @@
       '<div class="actions" style="margin-top:12px"><button class="btn" data-act="addUser">+ Ajouter une personne</button><button class="btn primary" data-act="saveUsers">Enregistrer les utilisateurs</button></div></div>' +
 
       '<div class="card"><h2>Données de démonstration</h2><p class="muted small" style="margin-top:0">Neuf dossiers fictifs à toutes les étapes, avec quelques présences et absences pour les deux premiers techniciens. Ils sont marqués « démo » et se suppriment d\'un clic sans toucher aux vraies données.</p>' +
-      '<div class="actions"><button class="btn" data-act="demoCharger">Charger la démo</button><button class="btn danger" data-act="demoSupprimer">Supprimer la démo</button></div></div>';
+      '<div class="actions"><button class="btn" data-act="demoCharger">Charger la démo</button><button class="btn danger" data-act="demoSupprimer">Supprimer la démo</button></div></div>' +
+
+      blocKraaft();
   }
+
+  /** Reprise Kraaft : reprend dans un dossier la discussion et les documents d'une conversation Kraaft */
+  function blocKraaft() {
+    const ds = S.data.dossiers.filter((d) => d.demo !== 'oui').slice()
+      .sort((a, b) => sansAccent(nomClient(a)).localeCompare(sansAccent(nomClient(b))));
+    return '<div class="card"><h2>Reprise Kraaft</h2><p class="muted small" style="margin-top:0">Reprend dans un dossier tout le contenu d\'une conversation Kraaft : ' +
+      'les messages, photos et fichiers de la discussion (avec leur auteur et leur date d\'origine, marqués « (Kraaft) ») et les documents classés (Plans, DICT, Arrêtés…). ' +
+      'Les fichiers sont téléchargés depuis Kraaft et rangés dans le dossier Google Drive du chantier. Relancer la reprise ne crée pas de doublon.</p>' +
+      '<label class="field"><span>Fichier de reprise Kraaft (.json)</span><input type="file" id="kraaft-fichier" accept=".json,application/json"></label>' +
+      '<label class="field"><span>Dossier de l\'appli à compléter</span><select id="kraaft-dossier"><option value="">Choisir un dossier…</option>' +
+      ds.map((d) => '<option value="' + esc(d.id) + '">' + esc(nomClient(d)) + (d.lieu ? ' · ' + esc(d.lieu) : '') + '</option>').join('') + '</select></label>' +
+      '<p class="small muted" id="kraaft-etat"></p>' +
+      '<div class="actions"><button class="btn primary" data-act="kraaftImport">Lancer la reprise</button></div></div>';
+  }
+
+  /** Lit le fichier de reprise Kraaft choisi et présélectionne le dossier du même nom */
+  async function lireFichierKraaft() {
+    const inp = $('#kraaft-fichier');
+    const file = inp && inp.files && inp.files[0];
+    if (!file) return null;
+    const k = JSON.parse(await file.text());
+    if (!k || !Array.isArray(k.messages)) throw new Error('Ce fichier n\'est pas un fichier de reprise Kraaft.');
+    return k;
+  }
+
+  /** Montre l'avancement de la reprise (message en bas d'écran et sous le bouton) */
+  function etatKraaft(texte, erreur) {
+    toast(texte, erreur);
+    const el = $('#kraaft-etat');
+    if (el) el.textContent = texte;
+  }
+
+  async function lancerKraaft(k, id) {
+    const messages = k.messages || [];
+    const documents = k.documents || [];
+    const lot = 8;
+    let ajoutes = 0, deja = 0;
+    const erreurs = [];
+    const envoyer = async (data, libelle) => {
+      etatKraaft(libelle);
+      const d = await api('importKraaft', Object.assign({ dossierId: id, kraaftId: k.kraaftId || '' }, data));
+      if (d && d.dossiers) S.data = d;
+      const r = (d && d.resultat) || {};
+      ajoutes += r.ajoutes || 0;
+      deja += r.deja || 0;
+      (r.erreurs || []).forEach((e) => erreurs.push(e));
+      return r;
+    };
+    for (let i = 0; i < messages.length; ) {
+      const part = messages.slice(i, i + lot);
+      const r = await envoyer({ messages: part }, 'Reprise Kraaft : ' + Math.min(i + lot, messages.length) + ' sur ' + messages.length + ' messages…');
+      i += r.stop >= 0 ? Math.max(1, r.stop) : part.length;
+    }
+    for (let j = 0; j < documents.length; ) {
+      const part = documents.slice(j, j + lot);
+      const r = await envoyer({ documents: part }, 'Reprise Kraaft : ' + Math.min(j + lot, documents.length) + ' sur ' + documents.length + ' documents…');
+      j += r.stop >= 0 ? Math.max(1, r.stop) : part.length;
+    }
+    if (k.terminer && !erreurs.length) await envoyer({ terminer: k.terminer }, 'Reprise Kraaft : classement dans les archives…');
+    await afficher();
+    etatKraaft('Reprise terminée : ' + ajoutes + ' élément(s) ajouté(s)' + (deja ? ', ' + deja + ' déjà présent(s)' : '') +
+      (erreurs.length ? '. À reprendre (relancez la reprise) : ' + erreurs.join(' ; ') : '.') +
+      (k.terminer && erreurs.length ? ' Le dossier sera classé dans les archives quand tout sera repris.' : ''), !!erreurs.length);
+  }
+
 
   /** Accès aux dossiers de documents, technicien par technicien */
   function blocAccesDocs() {
@@ -2429,7 +2496,20 @@
     demoCharger: () => FORMS.confirmer('Charger la démonstration ?', 'Neuf dossiers fictifs vont être ajoutés, avec quelques présences et absences. Les vraies données ne sont pas touchées.', 'Charger',
       () => agir('demoCharger', {}, 'Démonstration chargée')),
     demoSupprimer: () => FORMS.confirmer('Supprimer la démonstration ?', 'Les dossiers marqués « démo » seront supprimés. Les vrais dossiers ne sont pas touchés.', 'Supprimer',
-      () => agir('demoSupprimer', {}, 'Démonstration supprimée'), 'danger')
+      () => agir('demoSupprimer', {}, 'Démonstration supprimée'), 'danger'),
+    kraaftImport: () => essayer(async () => {
+      const k = await lireFichierKraaft();
+      if (!k) throw new Error('Choisissez d\'abord le fichier de reprise Kraaft.');
+      const sel = $('#kraaft-dossier');
+      const d = parId(sel.value);
+      if (!d) throw new Error('Choisissez le dossier de l\'appli à compléter.');
+      const n = (k.messages || []).length, nd = (k.documents || []).length;
+      FORMS.confirmer('Lancer la reprise Kraaft ?',
+        'La conversation Kraaft <strong>' + esc(k.nom || '') + '</strong> (' + n + ' message(s), ' + nd + ' document(s) classé(s)) va être reprise dans le dossier <strong>' + esc(nomClient(d)) + '</strong>.' +
+        (k.terminer ? ' Le chantier étant terminé dans Kraaft, le dossier sera ensuite classé dans les archives.' : '') +
+        ' Aucun mail n\'est envoyé. Gardez cette page ouverte pendant la reprise.',
+        'Lancer', () => { setTimeout(() => essayer(() => lancerKraaft(k, d.id)), 0); });
+    })
   };
 
   function apresAffichage(page) {
