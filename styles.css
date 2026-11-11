@@ -420,3 +420,14 @@ table.equipe td.jour { min-width: 92px; font-size: 13px; }
 
 .interv-techs { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; margin: 6px 0 8px; }
 .interv-techs .check { margin: 0; }
+
+/* Notifications */
+.carte-notif { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-left: 4px solid var(--navy); }
+.carte-notif-corps { display: flex; gap: 12px; align-items: flex-start; flex: 1; min-width: 220px; }
+.carte-notif-icone { font-size: 26px; line-height: 1; }
+.h3-etapes { font-size: 15px; color: var(--navy); margin: 14px 0 8px; }
+ol.etapes { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 8px; }
+ol.etapes li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; }
+ol.etapes .num { flex: 0 0 24px; height: 24px; border-radius: 50%; background: var(--orange); color: #fff; font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+/* iPhone installé : laisser la place à la barre d'état */
+@supports (padding-top: env(safe-area-inset-top)) { .topbar { padding-top: env(safe-area-inset-top); } }

@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-07 n°9';
+  const VERSION_ECRANS = '2026-11-11 n°10';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -367,6 +367,7 @@
       } else {
         afficher();
       }
+      preparerTelephone();
     } catch (e) {
       if (e.code !== 'NON_CONNECTE' && e.code !== 'ACCES_REFUSE') montrerConnexion(e.message);
     }
@@ -415,7 +416,8 @@
       $('#nav').innerHTML = marque + '<div class="nav-role">Technicien</div>' +
         lien('#/', 'Tableau de bord', totalNonLus(), true) +
         lien('#/journee', 'Ma journée', c.jourNonDeclare ? '!' : '', true) +
-        lien('#/conges', 'Mes absences') + pied;
+        lien('#/conges', 'Mes absences') +
+        lien('#/notifications', '🔔 Notifications', etatNotif() === 'inactif' || etatNotif() === 'ios_installer' ? '!' : '', true) + pied;
       return;
     }
     $('#nav').innerHTML = marque +
@@ -432,7 +434,8 @@
       lien('#/conges', 'Congés et absences', c.conges, c.conges) +
       lien('#/trajets', 'Trajets (PDF)') +
       lien('#/agenda', 'Chercher dans l\'agenda') +
-      lien('#/reglages', 'Réglages') + pied;
+      lien('#/reglages', 'Réglages') +
+      lien('#/notifications', '🔔 Notifications', etatNotif() === 'inactif' || etatNotif() === 'ios_installer' ? '!' : '', true) + pied;
   }
 
   function fermerMenu() {
@@ -463,6 +466,7 @@
         case 'trajets': html = estAdmin() ? vueTrajets() : '<div class="empty">Réservé à l\'administrateur.</div>'; break;
         case 'equipe': html = estAdmin() ? vueEquipe(parts[1]) : '<div class="empty">Réservé à l\'administrateur.</div>'; break;
         case 'agenda': html = estAdmin() ? vueAgenda() : '<div class="empty">Réservé à l\'administrateur.</div>'; break;
+        case 'notifications': html = vueNotifications(); break;
         case 'terrain':
           if (parts[1]) { await chargerDossier(parts[1]); html = vueTerrainChantier(); } else html = vueTerrain();
           break;
@@ -495,8 +499,9 @@
     return n ? '<span class="pill msg">💬 ' + n + ' nouveau' + (n > 1 ? 'x' : '') + ' message' + (n > 1 ? 's' : '') + '</span>' : '';
   };
 
-  // Toutes les 2 minutes : nouvelles pastilles de messages (sans recharger la page affichée)
-  setInterval(async () => {
+  // Pastilles de messages à jour (sans recharger la page affichée) : toutes les 2 minutes,
+  // à l'arrivée d'une notification, et quand on revient sur l'appli
+  async function rafraichirPastilles() {
     if (!S.data || document.hidden || $('#modal').open) return;
     try {
       const b = await api('boot');
@@ -512,7 +517,9 @@
         if (routeActuelle() === '#/' && !document.activeElement.matches('input, textarea, select')) await afficher();
       }
     } catch (e) { /* on réessaiera */ }
-  }, 120000);
+  }
+  setInterval(rafraichirPastilles, 120000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) rafraichirPastilles(); });
 
   async function rafraichir(msg) {
     S.data = await api('boot');
@@ -607,7 +614,7 @@
         '<li><span><a href="#/dossier/' + s.d.id + '">' + esc(nomChantier(s.d)) + '</a> · ' + esc(s.txt) + '</span><span class="muted">' + fr(s.date, true) + '</span></li>').join('') + '</ul>'
         : '<p class="muted">Aucune livraison ni début de chantier prévu.</p>') + '</div>' +
       '</div>' +
-      carteMessages() +
+      '<div style="margin-top:16px">' + carteNotifs() + '</div>' + carteMessages() +
       '<div style="margin-top:16px">' + carteEquipeJour() + '</div>' +
       '<div class="grid three" style="margin-top:16px">' +
       '<div class="card"><h2>Taux de signature</h2><div class="big-rate">' +
@@ -1129,7 +1136,7 @@
       '<div class="n">' + n + '</div><div class="l">' + lib + '</div>' + (filtre ? '</button>' : '</div>');
     return '<div class="page-head"><div><h1>Bonjour ' + esc(prenom(moi())) + '</h1><p>' + fr(t, true) + '</p></div></div>' +
       (!p && jourTravaille(t) && !congeDuJour(moi(), t) ? '<a class="note-orange" href="#/journee" style="display:block;text-decoration:none">📋 Ta journée n\'est pas encore déclarée. <strong>La remplir</strong></a>' : '') +
-      carteMessages() + '<div style="height:16px"></div>' +
+      carteNotifs() + carteMessages() + '<div style="height:16px"></div>' +
       '<div class="loupe" style="margin-bottom:16px"><input type="search" id="tech-q" placeholder="Rechercher un chantier : client, commune, n° de commande…" aria-label="Rechercher un chantier" autocomplete="off" value="' + esc(S.techQ || '') + '"></div>' +
       '<div class="stats tech" id="tech-tuiles" style="margin-bottom:16px">' +
       tuile(ajd.length, 'chantier(s) pour moi aujourd\'hui', 'jour', false) +
@@ -1517,6 +1524,148 @@
   }
 
   /* ================================================================
+   * APPLI SUR LE TÉLÉPHONE : INSTALLATION ET NOTIFICATIONS
+   * ================================================================ */
+  // CFG (réglages de config.js) est déjà défini en haut du fichier
+  const fbConfigOk = () => !!(CFG.FIREBASE && CFG.FIREBASE.apiKey && String(CFG.FIREBASE.apiKey).indexOf('A_REMPLIR') < 0 && CFG.VAPID_KEY && CFG.VAPID_KEY.indexOf('A_REMPLIR') < 0);
+  const estIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const estInstalle = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+  const pushPossible = () => 'serviceWorker' in navigator && 'Notification' in window && 'PushManager' in window;
+  let installDiffere = null; // Android : proposition d'installation gardée pour le bouton « Installer »
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installDiffere = e; });
+
+  function nomAppareil() {
+    const ua = navigator.userAgent;
+    const os = /iphone/i.test(ua) ? 'iPhone' : /ipad/i.test(ua) || (estIOS() && !/iphone/i.test(ua)) ? 'iPad' : /android/i.test(ua) ? 'Android' : /windows/i.test(ua) ? 'PC Windows' : /mac/i.test(ua) ? 'Mac' : 'Appareil';
+    const nav = /edg\//i.test(ua) ? 'Edge' : /crios|chrome/i.test(ua) ? 'Chrome' : /firefox|fxios/i.test(ua) ? 'Firefox' : /safari/i.test(ua) ? 'Safari' : '';
+    return os + (nav ? ' · ' + nav : '') + (estInstalle() ? ' (appli)' : '');
+  }
+
+  /** État des notifications sur CET appareil */
+  function etatNotif() {
+    if (!fbConfigOk() || S.data.reglages.firebaseOk !== 'oui') return 'non_regle';
+    if (estIOS() && !estInstalle()) return 'ios_installer';
+    if (!pushPossible()) return 'impossible';
+    if (Notification.permission === 'denied') return 'refuse';
+    const jeton = lire('eh_push_jeton');
+    if (Notification.permission === 'granted' && jeton && (S.data.mesAppareils || []).some((a) => jeton.slice(-12) === a.fin)) return 'actif';
+    return 'inactif';
+  }
+
+  async function enregistrerSW() {
+    if (!('serviceWorker' in navigator)) return null;
+    try { return await navigator.serviceWorker.register('/sw.js'); } catch (e) { return null; }
+  }
+
+  function messaging() {
+    if (!window.firebase || !fbConfigOk()) throw new Error('Les notifications ne sont pas encore réglées (fichier config.js).');
+    if (!window.firebase.apps.length) window.firebase.initializeApp(CFG.FIREBASE);
+    return window.firebase.messaging();
+  }
+
+  /** Bouton « Activer les notifications » (doit venir d'un appui : exigé par l'iPhone) */
+  async function activerNotifs() {
+    const etat = etatNotif();
+    if (etat === 'ios_installer') throw new Error('Sur iPhone, installez d\'abord l\'appli sur l\'écran d\'accueil (voir les étapes), puis ouvrez-la depuis son icône.');
+    if (etat === 'non_regle') throw new Error('Les notifications ne sont pas encore réglées par l\'administrateur.');
+    if (etat === 'impossible') throw new Error('Ce navigateur ne sait pas recevoir de notifications. Sur Android, utilisez Chrome.');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('Notifications refusées. Pour les autoriser, allez dans les réglages du téléphone (ou du navigateur) pour ce site.');
+    const reg = (await enregistrerSW()) || (await navigator.serviceWorker.ready);
+    const jeton = await messaging().getToken({ vapidKey: CFG.VAPID_KEY, serviceWorkerRegistration: reg });
+    if (!jeton) throw new Error('Le téléphone n\'a pas donné de jeton de notification. Réessayez.');
+    await agir('enregistrerAppareil', { jeton, appareil: nomAppareil() }, 'Notifications activées sur cet appareil');
+    stocker('eh_push_jeton', jeton);
+    await afficher();
+  }
+
+  async function desactiverNotifs() {
+    const jeton = lire('eh_push_jeton');
+    try { await messaging().deleteToken(); } catch (e) { /* déjà retiré */ }
+    if (jeton) await agir('supprimerAppareil', { jeton }, 'Notifications arrêtées sur cet appareil');
+    stocker('eh_push_jeton', null);
+    await afficher();
+  }
+
+  /** Au démarrage : programme d'arrière-plan, jeton à jour, messages reçus appli ouverte */
+  async function preparerTelephone() {
+    const reg = await enregistrerSW();
+    if (!reg || !fbConfigOk() || !window.firebase || Notification.permission !== 'granted' || S.data.reglages.firebaseOk !== 'oui') return;
+    try {
+      const m = messaging();
+      const jeton = await m.getToken({ vapidKey: CFG.VAPID_KEY, serviceWorkerRegistration: reg });
+      const connu = (S.data.mesAppareils || []).some((a) => jeton && jeton.slice(-12) === a.fin);
+      if (jeton && (!connu || jeton !== lire('eh_push_jeton'))) {
+        await api('enregistrerAppareil', { jeton, appareil: nomAppareil() });
+        stocker('eh_push_jeton', jeton);
+      }
+      // Appli ouverte : pas de notification système, un message dans l'appli et les pastilles à jour
+      m.onMessage((p) => {
+        const n = p.notification || {};
+        toast('🔔 ' + (n.title || 'Nouvelle notification'));
+        rafraichirPastilles();
+      });
+    } catch (e) { /* on réessaiera au prochain démarrage */ }
+  }
+  // Toucher une notification alors que l'appli est déjà ouverte
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (ev) => {
+      if (ev.data && ev.data.type === 'ouvrir') location.href = ev.data.url;
+    });
+  }
+
+  /** Carte du tableau de bord tant que les notifications ne sont pas actives sur cet appareil */
+  function carteNotifs() {
+    const e = etatNotif();
+    if (e === 'actif' || e === 'non_regle' || lire('eh_notif_plus_tard') === today()) return '';
+    const txt = {
+      inactif: 'Recevez une notification sur ce téléphone pour chaque nouveau message, demande ou rappel.',
+      ios_installer: 'Pour recevoir les notifications sur iPhone, installez d\'abord l\'appli sur l\'écran d\'accueil.',
+      refuse: 'Les notifications sont bloquées pour ce site sur cet appareil.',
+      impossible: 'Ce navigateur ne reçoit pas les notifications. Sur Android, ouvrez l\'appli avec Chrome.'
+    }[e];
+    return '<div class="card carte-notif" style="margin-bottom:16px"><div class="carte-notif-corps"><span class="carte-notif-icone">🔔</span><div><strong>Notifications</strong><p class="small" style="margin:2px 0 0">' + txt + '</p></div></div>' +
+      '<div class="actions">' + (e === 'inactif' ? '<button class="btn orange" data-act="activerNotifs">Activer</button>' : '<a class="btn" href="#/notifications">Voir comment faire</a>') +
+      '<button class="btn ghost" data-act="notifPlusTard">Plus tard</button></div></div>';
+  }
+
+  /** Page « Notifications » : état sur cet appareil, appareils activés, installation pas à pas */
+  function vueNotifications() {
+    const e = etatNotif();
+    const mes = S.data.mesAppareils || [];
+    const fin = (lire('eh_push_jeton') || '').slice(-12);
+    const etat = {
+      actif: ['green', 'Activées sur cet appareil'], inactif: ['grey', 'Pas encore activées sur cet appareil'],
+      ios_installer: ['amber', 'Installez d\'abord l\'appli sur l\'écran d\'accueil'], refuse: ['red', 'Bloquées dans les réglages de l\'appareil'],
+      impossible: ['red', 'Ce navigateur ne les reçoit pas'], non_regle: ['amber', 'Pas encore réglées par l\'administrateur']
+    }[e];
+    const etape = (n, t) => '<li><span class="num">' + n + '</span><span>' + t + '</span></li>';
+    return '<div class="page-head"><div><h1>Notifications</h1><p>Recevoir sur le téléphone les nouveaux messages, demandes et rappels, même appli fermée.</p></div></div>' +
+      '<div class="card"><h2>Sur cet appareil</h2><p><span class="pill ' + etat[0] + '">' + etat[1] + '</span> <span class="muted small">' + esc(nomAppareil()) + '</span></p>' +
+      '<div class="actions">' +
+      (e === 'inactif' ? '<button class="btn orange" data-act="activerNotifs">Activer les notifications</button>' : '') +
+      (e === 'actif' ? '<button class="btn" data-act="pushTest">M\'envoyer une notification d\'essai</button><button class="btn ghost danger" data-act="desactiverNotifs">Arrêter sur cet appareil</button>' : '') +
+      (installDiffere && !estInstalle() ? '<button class="btn" data-act="installerAppli">📲 Installer l\'appli</button>' : '') + '</div>' +
+      (e === 'refuse' ? '<p class="small" style="margin-bottom:0">Pour débloquer : réglages du téléphone → Notifications (iPhone : Réglages → Notifications → Elec Habitat ; Android : Chrome → ⋮ → Paramètres → Notifications), puis revenez ici.</p>' : '') +
+      '</div>' +
+      '<div class="card"><h2>Installer l\'appli sur le téléphone</h2>' +
+      '<h3 class="h3-etapes">iPhone (Safari)</h3><ol class="etapes">' +
+      etape(1, 'Ouvrez <strong>' + esc(location.host) + '</strong> dans <strong>Safari</strong>.') +
+      etape(2, 'Touchez le bouton <strong>Partager</strong> (carré avec une flèche vers le haut).') +
+      etape(3, 'Choisissez <strong>« Sur l\'écran d\'accueil »</strong>, puis <strong>Ajouter</strong>.') +
+      etape(4, 'Ouvrez l\'appli <strong>depuis la nouvelle icône</strong> Elec Habitat, connectez-vous, puis touchez <strong>Activer les notifications</strong>.') + '</ol>' +
+      '<p class="small muted">Il faut iOS 16.4 ou plus récent. Sur iPhone, les notifications ne marchent que dans l\'appli installée, pas dans Safari.</p>' +
+      '<h3 class="h3-etapes">Android (Chrome)</h3><ol class="etapes">' +
+      etape(1, 'Ouvrez <strong>' + esc(location.host) + '</strong> dans <strong>Chrome</strong>.') +
+      etape(2, 'Menu <strong>⋮</strong> en haut à droite, puis <strong>« Installer l\'application »</strong> (ou « Ajouter à l\'écran d\'accueil »).') +
+      etape(3, 'Ouvrez l\'appli depuis son icône, puis touchez <strong>Activer les notifications</strong> et acceptez.') + '</ol></div>' +
+      '<div class="card"><h2>Mes appareils qui reçoivent les notifications</h2>' +
+      (mes.length ? '<ul class="mini-list">' + mes.map((a) => '<li><span>' + esc(a.appareil) + (a.fin === fin ? ' <span class="pill green">cet appareil</span>' : '') +
+        '<br><span class="muted small">depuis le ' + fr(String(a.creeLe).slice(0, 10)) + '</span></span><button class="btn ghost small danger" data-act="retirerAppareil" data-id="' + esc(a.id) + '">Retirer</button></li>').join('') + '</ul>'
+        : '<p class="muted small" style="margin:0">Aucun appareil pour l\'instant.</p>') + '</div>';
+  }
+
+  /* ================================================================
    * RÉGLAGES
    * ================================================================ */
   const LIB_DELAI = {
@@ -1584,6 +1733,8 @@
         '<label class="field"><span>Objet du mail</span><input type="text" name="objet" value="' + esc(m.objet) + '"></label>' +
         '<label class="field"><span>Texte du mail</span><textarea name="texte" rows="5">' + esc(m.texte) + '</textarea></label>' +
         (avecCopie ? '<label class="check" style="margin:-4px 0 10px"><input type="checkbox" name="copieTechniciens"' + (m.copieTechniciens === 'oui' ? ' checked' : '') + '> Envoyer aussi aux techniciens du chantier</label>' : '') +
+        '<label class="check" style="margin:0 0 6px"><input type="checkbox" name="push"' + (m.push !== 'non' ? ' checked' : '') + '> Envoyer aussi une notification sur le téléphone' +
+        (S.data.reglages.firebaseOk === 'oui' ? '' : ' <span class="muted small">(notifications pas encore réglées)</span>') + '</label>' +
         '<label class="check" style="margin:0 0 14px"><input type="checkbox" name="sms"' + (m.sms === 'oui' ? ' checked' : '') + '> Envoyer aussi un SMS' +
         (smsOk ? ' <span class="muted small">(aux personnes qui ont un téléphone et « SMS » coché)</span>' : ' <span class="muted small">(SMS non activés, voir plus bas)</span>') + '</label>' +
         '<button type="button" class="btn" data-act="mailTest" data-cle="' + k + '">M\'envoyer un essai</button>' +
@@ -1640,7 +1791,18 @@
       '<label class="field"><span>Adresse de test</span><input type="email" name="emailTest" value="' + esc(r.emailTest) + '"></label></div>' +
       '<button class="btn primary" type="submit">Enregistrer</button></form>' +
 
-      '<div class="card"><h2>Mails et SMS</h2>' +
+      '<div class="card"><h2>Notifications sur les téléphones</h2>' +
+      '<p class="muted small" style="margin-top:0">Chaque mail envoyé par l\'appli part aussi en notification sur les téléphones où la personne a activé les notifications (page « 🔔 Notifications »). ' +
+      'Il faut un projet Firebase (gratuit) : suivez le guide fourni, puis collez ici le contenu du fichier de clé (compte de service).</p>' +
+      '<p>' + (S.data.reglages.firebaseOk === 'oui' ? '<span class="pill green">Réglées</span> projet <strong>' + esc(S.data.reglages.firebaseProjet) + '</strong>'
+        : '<span class="pill amber">Pas encore réglées</span>') +
+      ((window.SUIVI_CONFIG || {}).FIREBASE && String(((window.SUIVI_CONFIG || {}).FIREBASE || {}).apiKey || '').indexOf('A_REMPLIR') < 0 ? '' : ' <span class="pill red">config.js : partie FIREBASE à remplir</span>') + '</p>' +
+      '<label class="field"><span>Clé du compte de service Firebase (contenu du fichier .json)</span>' +
+      '<textarea id="fcm-json" rows="4" placeholder="{ &quot;type&quot;: &quot;service_account&quot;, &quot;project_id&quot;: … }" autocomplete="off" spellcheck="false"></textarea>' +
+      '<small>La clé est gardée dans le programme Google, jamais dans le tableur ni dans les écrans. Laissez vide pour garder la clé actuelle.</small></label>' +
+      '<div class="actions"><button class="btn primary" data-act="saveFirebase">Enregistrer la clé</button>' +
+      (S.data.reglages.firebaseOk === 'oui' ? '<button class="btn ghost danger" data-act="retirerFirebase">Retirer la clé</button><a class="btn" href="#/notifications">Tester sur cet appareil</a>' : '') + '</div></div>' +
+      '<div class="card"><h2>Mails, notifications et SMS</h2>' +
       '<div class="help">Dans l\'objet et le texte, ces mots entre accolades sont remplacés automatiquement : ' +
       ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'lieu', 'zone', 'fournisseur', 'date_livraison', 'quand', 'reception', 'receptionne_par', 'numero_bl',
         'pv', 'reserves', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'demande_par', 'liste_materiel', 'prenom', 'date', 'technicien', 'motif', 'periode',
@@ -1651,7 +1813,7 @@
       blocAccesDocs() +
       '<div class="card"><h2>Utilisateurs</h2><p class="muted small" style="margin-top:0">Seules ces adresses Google peuvent se connecter. ' +
       '<strong>Administrateur</strong> : accès à tout. <strong>Technicien</strong> : les chantiers (sans pouvoir en créer), la discussion, le matériel, et ses propres présences, trajets et absences.</p>' +
-      '<div style="overflow-x:auto"><table class="users"><thead><tr><th>Adresse Gmail</th><th>Nom</th><th>Rôle</th><th>Téléphone</th><th>SMS</th><th>Actif</th><th></th></tr></thead><tbody id="users-body">' + users + '</tbody></table></div>' +
+      '<div style="overflow-x:auto"><table class="users"><thead><tr><th>Adresse Gmail</th><th>Nom</th><th>Rôle</th><th>Téléphone</th><th>SMS</th><th title="Appareils qui reçoivent les notifications">🔔</th><th>Actif</th><th></th></tr></thead><tbody id="users-body">' + users + '</tbody></table></div>' +
       '<div class="actions" style="margin-top:12px"><button class="btn" data-act="addUser">+ Ajouter une personne</button><button class="btn primary" data-act="saveUsers">Enregistrer les utilisateurs</button></div></div>' +
 
       '<div class="card"><h2>Données de démonstration</h2><p class="muted small" style="margin-top:0">Neuf dossiers fictifs à toutes les étapes, avec quelques présences et absences pour les deux premiers techniciens. Ils sont marqués « démo » et se suppriment d\'un clic sans toucher aux vraies données.</p>' +
@@ -1751,6 +1913,7 @@
       '<td><select name="role"><option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>Administrateur</option><option value="technicien"' + (u.role !== 'admin' ? ' selected' : '') + '>Technicien</option></select></td>' +
       '<td><input type="tel" name="telephone" value="' + esc(u.telephone || '') + '" placeholder="06 …" style="min-width:120px"></td>' +
       '<td><input type="checkbox" name="sms"' + (u.sms === 'oui' ? ' checked' : '') + ' aria-label="Recevoir les SMS"></td>' +
+      '<td class="small" title="Appareils qui reçoivent les notifications">' + (u.nbAppareils ? '<span class="pill green">' + u.nbAppareils + '</span>' : '<span class="muted">—</span>') + '</td>' +
       '<td><input type="checkbox" name="actif"' + (u.actif !== 'non' ? ' checked' : '') + ' aria-label="Actif"></td>' +
       '<td><button class="btn ghost" data-act="delUser" aria-label="Retirer">✕</button></td></tr>';
   }
@@ -2398,6 +2561,26 @@
       const r = await agir('dossierDepuisAgenda', { key: el.dataset.key }, 'Dossier créé');
       if (r && r.resultat) location.hash = '#/dossier/' + r.resultat;
     }),
+    activerNotifs: () => essayer(activerNotifs),
+    desactiverNotifs: () => essayer(desactiverNotifs),
+    pushTest: () => essayer(async () => { await api('pushTest', {}); toast('Notification d\'essai envoyée : elle arrive dans quelques secondes'); }),
+    notifPlusTard: () => { stocker('eh_notif_plus_tard', today()); afficher(); },
+    installerAppli: () => essayer(async () => {
+      if (!installDiffere) throw new Error('Utilisez le menu du navigateur : « Installer l\'application ».');
+      installDiffere.prompt();
+      await installDiffere.userChoice;
+      installDiffere = null;
+      afficher();
+    }),
+    retirerAppareil: (el) => FORMS.confirmer('Retirer cet appareil ?', 'Il ne recevra plus les notifications.', 'Retirer',
+      () => agir('supprimerAppareil', { id: el.dataset.id }, 'Appareil retiré'), 'danger'),
+    saveFirebase: () => essayer(async () => {
+      const t = $('#fcm-json').value.trim();
+      if (!t) throw new Error('Collez le contenu du fichier JSON, ou utilisez « Retirer la clé ».');
+      await agir('enregistrerCleFirebase', { json: t }, 'Clé Firebase enregistrée et vérifiée');
+    }),
+    retirerFirebase: () => FORMS.confirmer('Retirer la clé Firebase ?', 'Plus aucune notification ne partira vers les téléphones.', 'Retirer',
+      () => agir('enregistrerCleFirebase', { json: '' }, 'Clé retirée'), 'danger'),
     smsTest: () => FORMS.confirmer('SMS d\'essai', 'Enregistrez d\'abord la clé Brevo. Le SMS part vers le numéro indiqué pour vous dans « Utilisateurs ».', 'Envoyer',
       () => api('smsTest', {}).then(() => toast('SMS d\'essai envoyé'))),
     modifCommande: (el) => FORMS.modifCommande(el.dataset.id),
@@ -2460,6 +2643,7 @@
         const m = { cle: box.dataset.mail, active: g('active').checked ? 'oui' : 'non', destinataires: g('destinataires').value.trim(), objet: g('objet').value, texte: g('texte').value };
         if (g('copieTechniciens')) m.copieTechniciens = g('copieTechniciens').checked ? 'oui' : 'non';
         if (g('sms')) m.sms = g('sms').checked ? 'oui' : 'non';
+        if (g('push')) m.push = g('push').checked ? 'oui' : 'non';
         if (g('delaiJours')) m.delaiJours = g('delaiJours').value || '0';
         if (g('rythmeJours')) m.rythmeJours = g('rythmeJours').value || '1';
         if (g('heure')) {

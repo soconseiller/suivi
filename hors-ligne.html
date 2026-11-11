@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#222468">
+  <title>Elec Habitat – pas de réseau</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #222468; font-family: Arial, Helvetica, sans-serif; color: #1F2238; }
+    .carte { background: #fff; border-radius: 16px; max-width: 360px; margin: 20px; overflow: hidden; text-align: center; }
+    img { display: block; width: 100%; border-bottom: 4px solid #FF741B; background: #222468; }
+    .corps { padding: 24px; }
+    h1 { font-size: 20px; color: #222468; margin: 0 0 8px; }
+    p { color: #666A82; line-height: 1.5; }
+    button { background: #222468; color: #fff; border: 0; border-radius: 8px; padding: 12px 20px; font-size: 16px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="carte">
+    <img src="/logo.png" alt="Elec Habitat">
+    <div class="corps">
+      <h1>Pas de réseau</h1>
+      <p>Le téléphone n'arrive pas à joindre l'appli. Dès que le réseau revient, touchez le bouton.</p>
+      <button onclick="location.reload()">Réessayer</button>
+    </div>
+  </div>
+</body>
+</html>
