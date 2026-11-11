@@ -57,7 +57,7 @@ et les nouveaux : `sw.js`, `hors-ligne.html`, `apple-touch-icon.png`, `icon-mask
 **Dans Apps Script** : collez le nouveau `Code.gs`, enregistrez, puis
 *Déployer → Gérer les déploiements → ✏️ → Nouvelle version → Déployer*.
 
-Le bas du menu de l'appli doit afficher **« n°10 »** pour les écrans et pour le programme.
+Le bas du menu de l'appli doit afficher **« n°11 »** pour les écrans et pour le programme.
 
 ## Étape 6 – Sur chaque téléphone (chaque utilisateur)
 
