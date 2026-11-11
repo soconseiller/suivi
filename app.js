@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-12 n°13';
+  const VERSION_ECRANS = '2026-11-12 n°14';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -1726,7 +1726,8 @@
       const avecCopie = ['pv_reserves', 'reception_nc', 'a_facturer', 'facture_inter', 'nouveau_message'].indexOf(k) >= 0;
       const versTech = MAILS_VERS_TECHNICIEN.indexOf(k) >= 0;
       const resume = m.active === 'oui'
-        ? (avecHoraire ? jours.filter(Boolean).map((j) => LETTRES[Number(j) - 1]).join(' ') + ' à ' + m.heure + ' h' : 'immédiat') + (m.sms === 'oui' && smsOk ? ' + SMS' : '')
+        ? (avecHoraire ? jours.filter(Boolean).map((j) => LETTRES[Number(j) - 1]).join(' ') + ' à ' + m.heure + ' h' : 'immédiat') +
+          (m.push === 'non' ? ' · mail' : m.push === 'seule' ? ' · notification' : ' · mail + notification') + (m.sms === 'oui' && smsOk ? ' + SMS' : '')
         : 'désactivé';
       return '<details class="mail" data-mail="' + k + '"><summary>' + esc(m.nom) + '<span class="sum-info">' + esc(resume) + '</span></summary><div class="mail-body">' +
         (AIDE_MAIL[k] ? '<p class="muted small">' + AIDE_MAIL[k] + '</p>' : '') +
@@ -1744,8 +1745,12 @@
         '<label class="field"><span>Objet du mail</span><input type="text" name="objet" value="' + esc(m.objet) + '"></label>' +
         '<label class="field"><span>Texte du mail</span><textarea name="texte" rows="5">' + esc(m.texte) + '</textarea></label>' +
         (avecCopie ? '<label class="check" style="margin:-4px 0 10px"><input type="checkbox" name="copieTechniciens"' + (m.copieTechniciens === 'oui' ? ' checked' : '') + '> Envoyer aussi aux techniciens du chantier</label>' : '') +
-        '<label class="check" style="margin:0 0 6px"><input type="checkbox" name="push"' + (m.push !== 'non' ? ' checked' : '') + '> Envoyer aussi une notification sur le téléphone' +
-        (S.data.reglages.firebaseOk === 'oui' ? '' : ' <span class="muted small">(notifications pas encore réglées)</span>') + '</label>' +
+        '<label class="field" style="margin:0 0 6px"><span>Comment prévenir</span><select name="push">' +
+          '<option value="oui"' + (m.push !== 'non' && m.push !== 'seule' ? ' selected' : '') + '>Mail et notification sur le téléphone</option>' +
+          '<option value="non"' + (m.push === 'non' ? ' selected' : '') + '>Mail seulement</option>' +
+          '<option value="seule"' + (m.push === 'seule' ? ' selected' : '') + '>Notification seulement</option></select>' +
+          '<small>Avec « Notification seulement », une personne qui n\'a activé les notifications sur aucun appareil reçoit quand même le mail.' +
+          (S.data.reglages.firebaseOk === 'oui' ? '' : ' Les notifications ne sont pas encore réglées : en attendant, tout part par mail.') + '</small></label>' +
         '<label class="check" style="margin:0 0 14px"><input type="checkbox" name="sms"' + (m.sms === 'oui' ? ' checked' : '') + '> Envoyer aussi un SMS' +
         (smsOk ? ' <span class="muted small">(aux personnes qui ont un téléphone et « SMS » coché)</span>' : ' <span class="muted small">(SMS non activés, voir plus bas)</span>') + '</label>' +
         '<button type="button" class="btn" data-act="mailTest" data-cle="' + k + '">M\'envoyer un essai</button>' +
@@ -2656,7 +2661,7 @@
         const m = { cle: box.dataset.mail, active: g('active').checked ? 'oui' : 'non', destinataires: g('destinataires').value.trim(), objet: g('objet').value, texte: g('texte').value };
         if (g('copieTechniciens')) m.copieTechniciens = g('copieTechniciens').checked ? 'oui' : 'non';
         if (g('sms')) m.sms = g('sms').checked ? 'oui' : 'non';
-        if (g('push')) m.push = g('push').checked ? 'oui' : 'non';
+        if (g('push')) m.push = g('push').value;
         if (g('delaiJours')) m.delaiJours = g('delaiJours').value || '0';
         if (g('rythmeJours')) m.rythmeJours = g('rythmeJours').value || '1';
         if (g('heure')) {

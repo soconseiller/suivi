@@ -25,7 +25,7 @@ const CONFIG = {
 
 const NOM_APPLI = 'Elec Habitat';
 // Numéro de version, affiché en bas du menu de l'appli (pour vérifier que le dernier déploiement est en service)
-const VERSION_PROGRAMME = '2026-11-12 n°13';
+const VERSION_PROGRAMME = '2026-11-12 n°14';
 
 /* ==================================================================
  * 1. STRUCTURE DES DONNÉES
@@ -68,7 +68,7 @@ const SCHEMA = {
   // Téléphones et ordinateurs qui reçoivent les notifications (jeton Firebase), par personne
   Appareils: ['id', 'email', 'jeton', 'appareil', 'creeLe', 'vuLe'],
   Reglages: ['cle', 'valeur'],
-  // push : notification sur le téléphone en plus du mail (vide = oui)
+  // push : comment prévenir — vide ou « oui » = mail + notification, « non » = mail seul, « seule » = notification seule
   Mails: ['cle', 'nom', 'active', 'destinataires', 'delaiJours', 'rythmeJours', 'jours', 'heure', 'objet', 'texte',
     'copieTechniciens', 'sms', 'push'],
   Relances: ['cle', 'dernierEnvoi'],
@@ -1707,6 +1707,7 @@ function enregistrerMails_(mails) {
     ['active', 'destinataires', 'delaiJours', 'rythmeJours', 'jours', 'heure', 'objet', 'texte', 'copieTechniciens', 'sms', 'push'].forEach(function (k) {
       if (m[k] !== undefined) patch[k] = String(m[k]);
     });
+    if (patch.push !== undefined && ['oui', 'non', 'seule'].indexOf(patch.push) < 0) patch.push = 'oui';
     update_('Mails', 'cle', m.cle, patch);
   });
 }
@@ -1827,6 +1828,22 @@ function texteEnHtml_(t) {
   return echapper_(t).replace(/\n/g, '<br>');
 }
 
+/** Répartit les destinataires entre mail et notification selon le choix fait dans les Réglages.
+ *  « Notification seule » : les personnes qui n'ont activé les notifications sur aucun appareil
+ *  reçoivent quand même le mail, pour que personne ne passe à côté. */
+function repartir_(m, toCsv) {
+  const emails = String(toCsv || '').split(',').map(function (e) { return e.trim(); }).filter(Boolean);
+  const canal = m.push === 'non' ? 'mail' : m.push === 'seule' ? 'notif' : 'les2';
+  if (canal === 'mail') return { mail: emails.join(','), push: '' };
+  if (canal === 'les2') return { mail: emails.join(','), push: emails.join(',') };
+  const equipes = {};
+  if (compteFirebase_()) all_('Appareils').forEach(function (a) { equipes[String(a.email).toLowerCase()] = true; });
+  return {
+    mail: emails.filter(function (e) { return !equipes[e.toLowerCase()]; }).join(','),
+    push: emails.filter(function (e) { return equipes[e.toLowerCase()]; }).join(',')
+  };
+}
+
 function envoyer_(m, vars, cleRelance) {
   const reg = lireReglages_();
   const to = destinataires_(m, vars);
@@ -1838,19 +1855,22 @@ function envoyer_(m, vars, cleRelance) {
     ? '<p style="margin-top:16px"><strong>Documents du PV</strong><br>' + pieces.liens.map(function (x) {
       return '<a href="' + x.lien + '" style="color:#222468">' + echapper_(x.nom) + '</a>';
     }).join('<br>') + '</p>' : '';
-  let resultat = 'envoyé';
-  try {
-    const mail = {
-      to: to, subject: sujet, body: corps + '\n\n' + vars.lien,
-      htmlBody: gabaritHtml_(texteEnHtml_(corps) + docsHtml, vars.lien), name: NOM_APPLI
-    };
-    if (pieces.blobs.length) mail.attachments = pieces.blobs;
-    MailApp.sendEmail(avecReponse_(mail));
-  } catch (e) {
-    resultat = 'erreur : ' + e;
+  const qui = repartir_(m, to);
+  let resultat = qui.mail ? 'envoyé' : 'notification seule';
+  if (qui.mail) {
+    try {
+      const mail = {
+        to: qui.mail, subject: sujet, body: corps + '\n\n' + vars.lien,
+        htmlBody: gabaritHtml_(texteEnHtml_(corps) + docsHtml, vars.lien), name: NOM_APPLI
+      };
+      if (pieces.blobs.length) mail.attachments = pieces.blobs;
+      MailApp.sendEmail(avecReponse_(mail));
+    } catch (e) {
+      resultat = 'erreur : ' + e;
+    }
   }
   if (m.sms === 'oui') resultat += smsPourAdresses_(to, sujet, vars.lien);
-  if (m.push !== 'non') resultat += pushPourAdresses_(to, sujet, corps, vars.lien);
+  if (qui.push) resultat += pushPourAdresses_(qui.push, sujet, corps, vars.lien);
   insert_('Journal', { date: horodatage_(new Date()), relance: m.cle, dossierId: vars._id || '', destinataires: to, resultat: resultat });
   if (cleRelance) marquerRelance_(cleRelance, jour_(new Date()));
 }
@@ -2043,10 +2063,11 @@ function envoyerRecap_(m, today) {
   const to = destinataires_(m);
   let sujet = remplir_(m.objet, { entreprise: reg.entreprise || '' });
   if (reg.modeTest === 'oui') sujet = '[TEST] ' + sujet;
-  let resultat = 'envoyé';
+  const qui = repartir_(m, to);
+  let resultat = qui.mail ? 'envoyé' : 'notification seule';
   try {
-    MailApp.sendEmail(avecReponse_({ to: to, subject: sujet, htmlBody: gabaritHtml_(corps, CONFIG.APP_URL, 'Ouvrir l\'appli'), name: NOM_APPLI }));
-    if (m.push !== 'non') pushPourAdresses_(to, sujet, 'Le récapitulatif de ce qui reste à faire est dans votre boîte mail.', CONFIG.APP_URL);
+    if (qui.mail) MailApp.sendEmail(avecReponse_({ to: qui.mail, subject: sujet, htmlBody: gabaritHtml_(corps, CONFIG.APP_URL, 'Ouvrir l\'appli'), name: NOM_APPLI }));
+    if (qui.push) pushPourAdresses_(qui.push, sujet, m.push === 'seule' ? 'Ouvrez l\'appli pour voir ce qui reste à faire.' : 'Le récapitulatif de ce qui reste à faire est dans votre boîte mail.', CONFIG.APP_URL);
   } catch (e) {
     resultat = 'erreur : ' + e;
   }
@@ -2586,10 +2607,11 @@ function envoyerAvancement_(m, today) {
   const to = destinataires_(m);
   let sujet = remplir_(m.objet, { entreprise: reg.entreprise || '' });
   if (reg.modeTest === 'oui') sujet = '[TEST] ' + sujet;
-  let resultat = 'envoyé';
+  const qui = repartir_(m, to);
+  let resultat = qui.mail ? 'envoyé' : 'notification seule';
   try {
-    MailApp.sendEmail(avecReponse_({ to: to, subject: sujet, htmlBody: gabaritHtml_(corps, CONFIG.APP_URL + '/?depuis=mail#/planning', 'Voir le planning'), name: NOM_APPLI }));
-    if (m.push !== 'non') pushPourAdresses_(to, sujet, dossiers.length + ' chantier(s) en cours : le point est dans votre boîte mail.', CONFIG.APP_URL + '/?depuis=mail#/planning');
+    if (qui.mail) MailApp.sendEmail(avecReponse_({ to: qui.mail, subject: sujet, htmlBody: gabaritHtml_(corps, CONFIG.APP_URL + '/?depuis=mail#/planning', 'Voir le planning'), name: NOM_APPLI }));
+    if (qui.push) pushPourAdresses_(qui.push, sujet, dossiers.length + ' chantier(s) en cours' + (m.push === 'seule' ? ' : le point est dans l\'appli.' : ' : le point est dans votre boîte mail.'), CONFIG.APP_URL + '/?depuis=mail#/planning');
   } catch (er) { resultat = 'erreur : ' + er; }
   insert_('Journal', { date: horodatage_(new Date()), relance: 'avancement', dossierId: '', destinataires: to, resultat: resultat });
   marquerRelance_('avancement', today);
