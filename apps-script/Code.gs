@@ -25,7 +25,7 @@ const CONFIG = {
 
 const NOM_APPLI = 'Elec Habitat';
 // Numéro de version, affiché en bas du menu de l'appli (pour vérifier que le dernier déploiement est en service)
-const VERSION_PROGRAMME = '2026-11-12 n°12';
+const VERSION_PROGRAMME = '2026-11-12 n°13';
 
 /* ==================================================================
  * 1. STRUCTURE DES DONNÉES
@@ -316,8 +316,27 @@ function miseAJourStructure_() {
   props.setProperty('STRUCT_V', STRUCT_V);
 }
 
+/** Vrai si le compte qui fait tourner le programme en est le propriétaire (en cas de doute : vrai) */
+function estProprietaire_() {
+  try {
+    const proprio = DriveApp.getFileById(ScriptApp.getScriptId()).getOwner().getEmail();
+    return String(proprio).toLowerCase() === String(Session.getEffectiveUser().getEmail()).toLowerCase();
+  } catch (e) {
+    return true;
+  }
+}
+
 /** Lancé automatiquement toutes les heures */
 function chaqueHeure() {
+  // Après un changement de compte : l'ancien compte (resté éditeur) arrête son propre rappel horaire,
+  // pour que les mails ne partent pas en double depuis deux comptes.
+  if (!estProprietaire_()) {
+    ScriptApp.getProjectTriggers().forEach(function (t) {
+      if (t.getHandlerFunction() === 'chaqueHeure') ScriptApp.deleteTrigger(t);
+    });
+    Logger.log('Rappel horaire supprimé : ce compte n\'est plus propriétaire du programme.');
+    return;
+  }
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return;
   try {

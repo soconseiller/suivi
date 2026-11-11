@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-12 n°12';
+  const VERSION_ECRANS = '2026-11-12 n°13';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
