@@ -25,7 +25,7 @@ const CONFIG = {
 
 const NOM_APPLI = 'Elec Habitat';
 // Numéro de version, affiché en bas du menu de l'appli (pour vérifier que le dernier déploiement est en service)
-const VERSION_PROGRAMME = '2026-11-11 n°11';
+const VERSION_PROGRAMME = '2026-11-12 n°12';
 
 /* ==================================================================
  * 1. STRUCTURE DES DONNÉES
@@ -121,6 +121,8 @@ const REGLAGES_DEFAUT = {
   modeTest: 'oui',
   emailTest: '',
   emailContact: '',
+  // Adresse qui reçoit les réponses aux mails de l'appli (vide = le compte qui fait tourner le programme)
+  emailReponses: '',
   joursAgendaPasse: '60',
   joursAgendaFutur: '60',
   matinDebut: '08:00',
@@ -322,10 +324,10 @@ function chaqueHeure() {
     miseAJourStructure_();
     const reg = lireReglages_();
     if (reg.agendaActif === 'oui' && reg.modeTest !== 'oui') {
-      try { scannerAgenda_(); } catch (e) { Logger.log('Agenda : ' + e); }
+      try { scannerAgenda_(); } catch (e) { Logger.log('Agenda : ' + e); noterAgenda_(e); }
     }
     // Interventions déplacées ou supprimées directement dans l'agenda
-    try { synchroAgenda_(); } catch (e) { Logger.log('Synchro agenda : ' + e); }
+    try { synchroAgenda_(); noterAgenda_(null); } catch (e) { Logger.log('Synchro agenda : ' + e); noterAgenda_(e); }
     try { majTempsChantiers_(); } catch (e) { Logger.log('Temps des chantiers : ' + e); }
     lancerRelances_(new Date());
   } finally {
@@ -580,6 +582,7 @@ function boot_(user) {
     documents: all_('Documents').filter(function (x) { return ids[x.dossierId] && docVisible_(x, user); }),
     interventions: all_('Interventions').filter(function (x) { return ids[x.dossierId]; }),
     versionProgramme: VERSION_PROGRAMME,
+    alerteAgenda: admin ? (PropertiesService.getScriptProperties().getProperty('ERREUR_AGENDA') || '') : '',
     mesAppareils: appareils.filter(function (a) { return a.email === user.email; })
       .map(function (a) { return { id: a.id, appareil: a.appareil, creeLe: a.creeLe, fin: String(a.jeton).slice(-12) }; }),
     nonLus: nonLus_(user, ids),
@@ -1366,11 +1369,38 @@ function supprimerCommentaire_(d, user) {
 
 function agenda_() {
   const reg = lireReglages_();
-  if (reg.agendaId) {
-    const cal = CalendarApp.getCalendarById(reg.agendaId);
-    if (cal) return cal;
+  if (!reg.agendaId) return CalendarApp.getDefaultCalendar();
+  return agendaParId_(reg.agendaId);
+}
+
+/** Agenda partagé (ex. celui du compte de l'entreprise). Jamais d'agenda de secours :
+ *  s'il est inaccessible, on s'arrête au lieu d'écrire dans l'agenda personnel du compte qui fait tourner le programme. */
+function agendaParId_(id) {
+  id = String(id).trim();
+  let cal = CalendarApp.getCalendarById(id);
+  if (!cal) {
+    // Partagé mais pas encore ajouté à la liste : on l'ajoute, sans l'afficher
+    try { cal = CalendarApp.subscribeToCalendar(id, { hidden: false, selected: false }); } catch (e) { cal = null; }
   }
-  return CalendarApp.getDefaultCalendar();
+  if (!cal) {
+    throw erreur_('Agenda « ' + id + ' » inaccessible. Vérifiez qu\'il est bien partagé avec ' +
+      Session.getEffectiveUser().getEmail() + ' avec le droit « Apporter des modifications aux événements ».');
+  }
+  return cal;
+}
+
+/** Garde la dernière erreur d'agenda pour l'afficher sur le tableau de bord de l'admin (vide = tout va bien) */
+function noterAgenda_(e) {
+  const props = PropertiesService.getScriptProperties();
+  if (e) props.setProperty('ERREUR_AGENDA', String(e.message || e).slice(0, 400));
+  else props.deleteProperty('ERREUR_AGENDA');
+}
+
+/** Ajoute l'adresse de réponse choisie dans les Réglages à un mail */
+function avecReponse_(mail) {
+  const r = String(lireReglages_().emailReponses || '').trim();
+  if (r) mail.replyTo = r;
+  return mail;
 }
 
 function normaliser_(s) {
@@ -1628,6 +1658,16 @@ function enregistrerReglages_(d) {
       throw erreur_('Zones mal écrites. Format : nom:km maximum, séparés par des virgules, avec des kilomètres croissants (ex : 1A:5,1B:10,2:20,3:30,4:40,5:50).');
     }
   }
+  // Agenda partagé : on vérifie tout de suite qu'il est accessible
+  if (d.agendaId !== undefined) {
+    d.agendaId = String(d.agendaId).trim();
+    if (d.agendaId) agendaParId_(d.agendaId);
+    noterAgenda_(null);
+  }
+  if (d.emailReponses) {
+    d.emailReponses = String(d.emailReponses).trim();
+    if (!/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(d.emailReponses)) throw erreur_('Adresse de réponse mal écrite.');
+  }
   // Clé SMS : un champ laissé vide garde la clé déjà enregistrée
   if (d.smsCle === '' && existants.smsCle) delete d.smsCle;
   Object.keys(REGLAGES_DEFAUT).forEach(function (k) {
@@ -1786,7 +1826,7 @@ function envoyer_(m, vars, cleRelance) {
       htmlBody: gabaritHtml_(texteEnHtml_(corps) + docsHtml, vars.lien), name: NOM_APPLI
     };
     if (pieces.blobs.length) mail.attachments = pieces.blobs;
-    MailApp.sendEmail(mail);
+    MailApp.sendEmail(avecReponse_(mail));
   } catch (e) {
     resultat = 'erreur : ' + e;
   }
@@ -1986,7 +2026,7 @@ function envoyerRecap_(m, today) {
   if (reg.modeTest === 'oui') sujet = '[TEST] ' + sujet;
   let resultat = 'envoyé';
   try {
-    MailApp.sendEmail({ to: to, subject: sujet, htmlBody: gabaritHtml_(corps, CONFIG.APP_URL, 'Ouvrir l\'appli'), name: NOM_APPLI });
+    MailApp.sendEmail(avecReponse_({ to: to, subject: sujet, htmlBody: gabaritHtml_(corps, CONFIG.APP_URL, 'Ouvrir l\'appli'), name: NOM_APPLI }));
     if (m.push !== 'non') pushPourAdresses_(to, sujet, 'Le récapitulatif de ce qui reste à faire est dans votre boîte mail.', CONFIG.APP_URL);
   } catch (e) {
     resultat = 'erreur : ' + e;
@@ -2025,10 +2065,10 @@ function mailTest_(cle, user) {
     auteur: 'Paul Dufau', message: 'Gaines passées au rez-de-chaussée, je finis le tableau demain.',
     _techniciens: '', lien: CONFIG.APP_URL, _id: ''
   };
-  MailApp.sendEmail({
+  MailApp.sendEmail(avecReponse_({
     to: to, subject: '[ESSAI] ' + remplir_(m.objet, exemple), body: remplir_(m.texte, exemple),
     htmlBody: gabaritHtml_(texteEnHtml_(remplir_(m.texte, exemple)), CONFIG.APP_URL), name: NOM_APPLI
-  });
+  }));
 }
 
 /* ==================================================================
@@ -2529,7 +2569,7 @@ function envoyerAvancement_(m, today) {
   if (reg.modeTest === 'oui') sujet = '[TEST] ' + sujet;
   let resultat = 'envoyé';
   try {
-    MailApp.sendEmail({ to: to, subject: sujet, htmlBody: gabaritHtml_(corps, CONFIG.APP_URL + '/?depuis=mail#/planning', 'Voir le planning'), name: NOM_APPLI });
+    MailApp.sendEmail(avecReponse_({ to: to, subject: sujet, htmlBody: gabaritHtml_(corps, CONFIG.APP_URL + '/?depuis=mail#/planning', 'Voir le planning'), name: NOM_APPLI }));
     if (m.push !== 'non') pushPourAdresses_(to, sujet, dossiers.length + ' chantier(s) en cours : le point est dans votre boîte mail.', CONFIG.APP_URL + '/?depuis=mail#/planning');
   } catch (er) { resultat = 'erreur : ' + er; }
   insert_('Journal', { date: horodatage_(new Date()), relance: 'avancement', dossierId: '', destinataires: to, resultat: resultat });

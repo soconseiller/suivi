@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-11 n°11';
+  const VERSION_ECRANS = '2026-11-12 n°12';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -603,6 +603,7 @@
       '<div class="loupe"><svg class="loupe-ico" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
       '<input type="search" id="loupe" placeholder="Rechercher : plusieurs mots possibles (ex. : dupont dax tableau)" autocomplete="off" aria-label="Rechercher un dossier">' +
       '<div id="loupe-res" class="loupe-res" hidden></div></div>' +
+      (S.data.alerteAgenda ? '<a class="note-orange" href="#/reglages" style="display:block;text-decoration:none">⚠ Problème d\'agenda : ' + esc(S.data.alerteAgenda) + ' <strong>Voir les réglages</strong></a>' : '') +
       '<div class="stats">' +
       stat('#/devis', c.devis, 'Devis à faire', c.devisRetard, 'en retard') +
       stat('#/relances', c.relances, 'Devis en attente', c.relancesDues, 'à relancer') +
@@ -1756,6 +1757,8 @@
       '<form class="card" id="f-reglages"><h2>Entreprise et agenda</h2>' +
       '<div class="row2"><label class="field"><span>Nom de l\'entreprise</span><input type="text" name="entreprise" value="' + esc(r.entreprise) + '"></label>' +
       '<label class="field"><span>Adresse contact</span><input type="email" name="emailContact" value="' + esc(r.emailContact) + '"><small>Reçoit les mails quand aucune adresse n\'est précisée.</small></label></div>' +
+      '<label class="field"><span>Adresse qui reçoit les réponses</span><input type="email" name="emailReponses" value="' + esc(r.emailReponses || '') + '" placeholder="Ex. : sarl.elechabitat@gmail.com">' +
+      '<small>Quand quelqu\'un répond à un mail de l\'appli, sa réponse arrive à cette adresse. Vide : elle arrive sur le compte Google qui fait tourner le programme.</small></label>' +
       '<label class="field"><span>Mots-clés à repérer dans l\'agenda</span><input type="text" name="motsCles" value="' + esc(r.motsCles) + '">' +
       '<small>Séparés par une virgule : un rendez-vous qui contient l\'un d\'eux devient un dossier. Cherchés dans le titre et les notes, sans tenir compte des majuscules ni des accents.</small></label>' +
       '<label class="field"><span>Motifs de refus proposés</span><input type="text" name="motifsRefus" value="' + esc(r.motifsRefus) + '"><small>Séparés par une virgule.</small></label>' +
@@ -1768,7 +1771,7 @@
       '</div><small>Une journée va du début du matin à la fin de l\'après-midi. Si une intervention est déplacée dans Google Agenda, l\'appli se met à jour dans l\'heure.</small></div>' +
       '<label class="field"><span>Jours non travaillés</span><input type="text" name="joursNonTravailles" value="' + esc(r.joursNonTravailles || '') + '" placeholder="Ex. : 2026-12-24/2027-01-02, 2027-05-07">' +
       '<small>En plus des week-ends et des jours fériés (comptés automatiquement). Dates au format AAAA-MM-JJ, ou périodes AAAA-MM-JJ/AAAA-MM-JJ, séparées par une virgule. Ils ne sont pas comptés dans le temps passé sur les chantiers.</small></label>' +
-      '<label class="field"><span>Identifiant de l\'agenda</span><input type="text" name="agendaId" value="' + esc(r.agendaId) + '" placeholder="Vide = agenda principal du compte de l\'entreprise"></label>' +
+      '<label class="field"><span>Identifiant de l\'agenda</span><input type="text" name="agendaId" value="' + esc(r.agendaId) + '" placeholder="Ex. : sarl.elechabitat@gmail.com"><small>Pour un agenda partagé, son adresse (ou son identifiant, visible dans les paramètres de l\'agenda). Il doit être partagé avec le droit « Apporter des modifications aux événements ». Vide : l\'agenda principal du compte Google qui fait tourner le programme.</small></label>' +
 
       '<h2 style="margin-top:14px">Trajets</h2>' +
       '<div class="row2"><label class="field"><span>Nom du point de départ</span><input type="text" name="departNom" value="' + esc(r.departNom) + '"><small>Affiché dans l\'appli et sur les PDF.</small></label>' +
