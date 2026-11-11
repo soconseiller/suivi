@@ -401,6 +401,7 @@
   }
 
   function dessinerMenu(route) {
+    majPastilleIcone();
     const c = compteurs();
     const lien = (href, label, n, late) =>
       '<a href="' + href + '" class="' + (route === href ? 'active' : '') + '">' + label +
@@ -493,6 +494,15 @@
   }
   const routeActuelle = () => '#/' + ((location.hash.replace(/^#\/?/, '').split('/')[0]) || '');
   const totalNonLus = () => Object.keys(S.data.nonLus || {}).reduce((t, k) => t + S.data.nonLus[k], 0);
+  /** Pastille sur l'icône de l'appli installée (iPhone, ordinateur) : nombre de messages non lus.
+   *  Le chiffre est aussi gardé pour le programme d'arrière-plan, qui l'augmente à chaque notification reçue. */
+  function majPastilleIcone() {
+    const n = (S.data && S.data.nonLus) ? totalNonLus() : 0;
+    try {
+      if ('setAppBadge' in navigator) { if (n) navigator.setAppBadge(n).catch(() => {}); else navigator.clearAppBadge().catch(() => {}); }
+      if ('caches' in window) caches.open('eh-pastille').then((c) => c.put('/__pastille', new Response(String(n)))).catch(() => {});
+    } catch (e) { /* pastille non prise en charge sur cet appareil */ }
+  }
   /** Pastille « nouveaux messages » d'un chantier */
   const pillMessages = (id) => {
     const n = (S.data.nonLus || {})[id];

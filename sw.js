@@ -4,12 +4,27 @@
  *  - ouvre la bonne page de l'appli quand on touche une notification.
  * Ce fichier doit rester à la racine du site (à côté de index.html).
  */
-const VERSION_CACHE = 'eh-2026-11-11-1';
+const VERSION_CACHE = 'eh-2026-11-11-2';
 // Le site enlève « .html » des adresses (réglage cleanUrls de Vercel) : on demande donc « / » et « /hors-ligne »
 const FICHIERS = ['/', '/app.js', '/styles.css', '/config.js', '/logo.png', '/favicon.svg',
   '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/manifest.json', '/hors-ligne'];
 
 /* ---------- Notifications (Firebase) ---------- */
+// Pastille sur l'icône de l'appli : +1 à chaque notification reçue (iPhone, ordinateur ;
+// sur Android, c'est le téléphone qui affiche un point tant que la notification n'est pas lue)
+self.addEventListener('push', (event) => {
+  if (!('setAppBadge' in self.navigator)) return;
+  event.waitUntil((async () => {
+    try {
+      const c = await caches.open('eh-pastille');
+      const rep = await c.match('/__pastille');
+      const n = (rep ? Number(await rep.text()) || 0 : 0) + 1;
+      await c.put('/__pastille', new Response(String(n)));
+      await self.navigator.setAppBadge(n);
+    } catch (e) { /* pas de pastille, la notification s'affiche quand même */ }
+  })());
+});
+
 // Les réglages Firebase sont dans config.js (le même fichier que les écrans)
 try {
   importScripts('/config.js');
@@ -55,7 +70,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const noms = await caches.keys();
-    await Promise.all(noms.filter((n) => n !== VERSION_CACHE).map((n) => caches.delete(n)));
+    await Promise.all(noms.filter((n) => n !== VERSION_CACHE && n !== 'eh-pastille').map((n) => caches.delete(n)));
     await self.clients.claim();
   })());
 });
