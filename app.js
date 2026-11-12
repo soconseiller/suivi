@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-12 n°17';
+  const VERSION_ECRANS = '2026-11-12 n°18';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -1918,7 +1918,7 @@
         '<div class="actions"><button class="btn" data-act="kraaftNoms">Enregistrer les noms</button></div>'
         : '<p class="small muted">Aucune personne repérée pour l\'instant : elles apparaîtront après la première reprise.</p>') +
       '<h3 style="margin:14px 0 4px">Synchronisation</h3>' +
-      '<label class="check"><input type="checkbox" id="kraaft-sync"' + (L.sync ? ' checked' : '') + '> Chaque heure, reprendre les nouveaux messages et photos postés dans Kraaft sur les chantiers déjà repris</label>';
+      blocSyncKraaft(L);
     const filtrer = () => {
       const st = Array.from(document.querySelectorAll('.kraaft-filtre:checked')).map((x) => x.value);
       const masquer = $('#kraaft-masquer').checked;
@@ -1930,12 +1930,36 @@
     document.querySelectorAll('.kraaft-filtre, #kraaft-masquer').forEach((x) => { x.onchange = filtrer; });
     $('#kraaft-cherche').oninput = filtrer;
     $('#kraaft-liste').onchange = majCompteKraaft;
-    $('#kraaft-sync').onchange = (ev) => essayer(async () => {
-      const r = (await api('kraaftSync', { actif: ev.target.checked ? 'oui' : 'non' })).resultat || {};
-      L.sync = r.sync;
-      toast(r.sync ? 'Synchronisation Kraaft activée (chaque heure)' : 'Synchronisation Kraaft arrêtée');
-    });
+    $('#kraaft-pas').onchange = () => { $('#kraaft-fin-zone').hidden = $('#kraaft-pas').value === '24'; };
     filtrer();
+  }
+
+  /** Réglage de la synchronisation : jours, plage horaire, fréquence */
+  function blocSyncKraaft(L) {
+    const r = L.regle || { jours: '1,2,3,4,5', debut: 7, fin: 19, pas: 1 };
+    const jours = String(r.jours).split(',');
+    const NOMS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+    const heures = (sel) => Array.from({ length: 24 }, (_, h) => '<option value="' + h + '"' + (Number(sel) === h ? ' selected' : '') + '>' + h + ' h</option>').join('');
+    const PAS = [[1, 'Toutes les heures'], [2, 'Toutes les 2 heures'], [3, 'Toutes les 3 heures'], [4, 'Toutes les 4 heures'], [6, 'Toutes les 6 heures'], [12, 'Toutes les 12 heures'], [24, 'Une fois par jour']];
+    return '<label class="check"><input type="checkbox" id="kraaft-sync"' + (L.sync ? ' checked' : '') + '> Reprendre automatiquement les nouveaux messages et photos postés dans Kraaft sur les chantiers déjà repris</label>' +
+      '<div class="small" style="margin:6px 0">Jours : ' + NOMS.map((n, i) => '<label class="check" style="display:inline-flex;margin:0 10px 4px 0"><input type="checkbox" class="kraaft-jour" value="' + (i + 1) + '"' +
+        (jours.indexOf(String(i + 1)) >= 0 ? ' checked' : '') + '> ' + n + '</label>').join('') + '</div>' +
+      '<div class="row3" style="align-items:end">' +
+        '<label class="field"><span>Fréquence</span><select id="kraaft-pas">' + PAS.map((p) => '<option value="' + p[0] + '"' + (Number(r.pas) === p[0] ? ' selected' : '') + '>' + p[1] + '</option>').join('') + '</select></label>' +
+        '<label class="field"><span>À partir de</span><select id="kraaft-debut">' + heures(r.debut) + '</select></label>' +
+        '<label class="field" id="kraaft-fin-zone"' + (Number(r.pas) === 24 ? ' hidden' : '') + '><span>Jusqu\'à</span><select id="kraaft-fin">' + heures(r.fin) + '</select></label>' +
+      '</div>' +
+      '<div class="actions"><button class="btn" data-act="kraaftSyncEnregistrer">Enregistrer la synchronisation</button></div>' +
+      '<p class="small muted">' + resumeSyncKraaft(L) + '</p>';
+  }
+
+  function resumeSyncKraaft(L) {
+    if (!L.sync) return 'Synchronisation arrêtée.';
+    const r = L.regle;
+    const NOMS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+    const j = String(r.jours).split(',').map((x) => NOMS[Number(x) - 1]).filter(Boolean).join(', ');
+    return 'En service : ' + j + ', ' + (Number(r.pas) === 24 ? 'une fois par jour vers ' + r.debut + ' h' :
+      (Number(r.pas) === 1 ? 'toutes les heures' : 'toutes les ' + r.pas + ' heures') + ' de ' + r.debut + ' h à ' + r.fin + ' h') + '.';
   }
 
   function majCompteKraaft() {
@@ -2885,6 +2909,17 @@
         'Comptez environ une minute par chantier avec beaucoup de photos. <strong>Gardez cette page ouverte</strong> jusqu\'à la fin. Aucun mail ne part.',
         'Lancer la reprise', () => { setTimeout(() => essayer(() => lancerRepriseApi(convs)), 0); });
     },
+    kraaftSyncEnregistrer: () => essayer(async () => {
+      const jours = Array.from(document.querySelectorAll('.kraaft-jour:checked')).map((x) => x.value).join(',');
+      if (!jours) { toast('Choisissez au moins un jour.', true); return; }
+      const regle = { jours, debut: $('#kraaft-debut').value, fin: $('#kraaft-fin').value, pas: $('#kraaft-pas').value };
+      if (Number(regle.pas) !== 24 && Number(regle.fin) < Number(regle.debut)) { toast('L\'heure de fin doit être après l\'heure de début.', true); return; }
+      const r = (await api('kraaftSync', { actif: $('#kraaft-sync').checked ? 'oui' : 'non', regle })).resultat || {};
+      KRAAFT.liste.sync = r.sync;
+      KRAAFT.liste.regle = r.regle;
+      dessinerKraaftApi();
+      toast(r.sync ? 'Synchronisation Kraaft enregistrée' : 'Synchronisation Kraaft arrêtée');
+    }),
     kraaftNoms: () => essayer(async () => {
       const noms = {};
       document.querySelectorAll('[data-auteur]').forEach((i) => { if (i.value.trim()) noms[i.dataset.auteur] = i.value.trim(); });

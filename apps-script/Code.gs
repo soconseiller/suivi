@@ -25,7 +25,7 @@ const CONFIG = {
 
 const NOM_APPLI = 'Elec Habitat';
 // Numéro de version, affiché en bas du menu de l'appli (pour vérifier que le dernier déploiement est en service)
-const VERSION_PROGRAMME = '2026-11-12 n°17';
+const VERSION_PROGRAMME = '2026-11-12 n°18';
 
 /* ==================================================================
  * 1. STRUCTURE DES DONNÉES
@@ -1688,7 +1688,8 @@ function conversationsKraaft_() {
     conversations: out,
     auteurs: auteursKraaft_(),
     inconnus: JSON.parse(props.getProperty('KRAAFT_INCONNUS') || '{}'),
-    sync: props.getProperty('KRAAFT_SYNC') === 'oui'
+    sync: props.getProperty('KRAAFT_SYNC') === 'oui',
+    regle: regleSyncKraaft_()
   };
 }
 
@@ -1815,8 +1816,35 @@ function nommerAuteursKraaft_(d) {
 }
 
 /** Active ou coupe la synchronisation horaire (nouveaux messages Kraaft → appli) */
+/** Quand synchroniser : jours (1 = lundi … 7 = dimanche), de telle heure à telle heure, toutes les N heures */
+function regleSyncKraaft_() {
+  const def = { jours: '1,2,3,4,5', debut: 7, fin: 19, pas: 1 };
+  try { return Object.assign(def, JSON.parse(PropertiesService.getScriptProperties().getProperty('KRAAFT_SYNC_REGLE') || '{}')); } catch (e) { return def; }
+}
+
+/** Vrai si la synchronisation doit tourner à ce moment (au plus une fois par heure) */
+function heureSyncKraaft_(maintenant) {
+  const r = regleSyncKraaft_();
+  const jour = Number(Utilities.formatDate(maintenant, tz_(), 'u'));
+  const h = Number(Utilities.formatDate(maintenant, tz_(), 'H'));
+  const jours = String(r.jours).split(',').map(Number);
+  if (jours.indexOf(jour) < 0) return false;
+  const debut = Number(r.debut), fin = Number(r.fin), pas = Math.max(1, Number(r.pas) || 1);
+  if (h < debut || h > fin) return false;
+  return (h - debut) % pas === 0;
+}
+
 function reglerSyncKraaft_(d) {
   const props = PropertiesService.getScriptProperties();
+  if (d.regle) {
+    const r = d.regle;
+    const jours = String(r.jours || '').split(',').map(Number).filter(function (j) { return j >= 1 && j <= 7; });
+    const debut = Math.min(23, Math.max(0, Number(r.debut) || 0));
+    const fin = Math.min(23, Math.max(debut, Number(r.fin) || debut));
+    const pas = [1, 2, 3, 4, 6, 12, 24].indexOf(Number(r.pas)) >= 0 ? Number(r.pas) : 1;
+    if (!jours.length) throw erreur_('Choisissez au moins un jour.');
+    props.setProperty('KRAAFT_SYNC_REGLE', JSON.stringify({ jours: jours.join(','), debut: debut, fin: pas === 24 ? debut : fin, pas: pas }));
+  }
   if (d.actif === 'oui') {
     kraaftEspace_();
     props.setProperty('KRAAFT_SYNC', 'oui');
@@ -1824,13 +1852,20 @@ function reglerSyncKraaft_(d) {
   } else {
     props.deleteProperty('KRAAFT_SYNC');
   }
-  return { sync: props.getProperty('KRAAFT_SYNC') === 'oui' };
+  return { sync: props.getProperty('KRAAFT_SYNC') === 'oui', regle: regleSyncKraaft_() };
 }
 
 /** Lancé chaque heure : reprend les nouveaux messages des conversations Kraaft déjà reliées à un dossier */
-function syncKraaft_() {
+function syncKraaft_(forcer) {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty('KRAAFT_SYNC') !== 'oui' || !props.getProperty('KRAAFT_CLE')) return;
+  const maintenant = new Date();
+  if (!forcer) {
+    if (!heureSyncKraaft_(maintenant)) return;
+    const cle = Utilities.formatDate(maintenant, tz_(), 'yyyy-MM-dd HH');
+    if (props.getProperty('KRAAFT_DERNIERE') === cle) return;
+    props.setProperty('KRAAFT_DERNIERE', cle);
+  }
   const ws = props.getProperty('KRAAFT_WS');
   const parRoom = {};
   all_('Dossiers').forEach(function (x) { if (x.kraaft) parRoom[x.kraaft] = x.id; });
