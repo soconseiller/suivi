@@ -633,10 +633,12 @@
       '<div><div class="n">' + (ta.pct === null ? '–' : ta.pct + ' %') + '</div><div class="l">depuis janvier<br>' + ta.v + ' sur ' + ta.n + ' devis</div></div>' +
       '</div></div>' +
       '<div class="card"><h2>Motifs de refus</h2>' + motifsHtml + '</div>' +
-      '<div class="card"><h2>Chantiers</h2>' +
-      (chantiers.length ? '<ul class="mini-list">' + chantiers.map((d) =>
-        '<li style="display:block"><a href="#/dossier/' + d.id + '">' + esc(nomChantier(d)) + '</a>' +
-        '<div class="progress-line"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div>' + (Number(d.avancement) || 0) + ' %</div></li>').join('') + '</ul>'
+      '<div class="card"><h2>Chantiers <span class="pill">' + chantiers.length + '</span></h2>' +
+      (chantiers.length ? '<input type="search" id="chantiers-q" placeholder="Rechercher un chantier…" autocomplete="off" aria-label="Rechercher un chantier" style="margin-bottom:8px">' +
+        '<ul class="mini-list" id="chantiers-liste" style="max-height:420px;overflow-y:auto">' + chantiers.map((d) =>
+        '<li style="display:block" data-cherche="' + esc(sansAccent([nomChantier(d), nomClient(d), d.lieu, d.chantier, d.numDevis].join(' '))) + '"><a href="#/dossier/' + d.id + '">' + esc(nomChantier(d)) + '</a>' +
+        '<div class="progress-line"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div>' + (Number(d.avancement) || 0) + ' %</div></li>').join('') + '</ul>' +
+        '<p class="muted small" id="chantiers-vide" hidden>Aucun chantier ne correspond.</p>'
         : '<p class="muted small">Aucun chantier planifié.</p>') + '</div>' +
       '</div>';
   }
@@ -2945,6 +2947,17 @@
   };
 
   function apresAffichage(page) {
+    if (page === '' && $('#chantiers-q')) {
+      $('#chantiers-q').oninput = (ev) => {
+        const mots = sansAccent(ev.target.value).split(/\s+/).filter(Boolean);
+        let n = 0;
+        document.querySelectorAll('#chantiers-liste li').forEach((li) => {
+          li.hidden = !mots.every((m) => li.dataset.cherche.indexOf(m) >= 0);
+          if (!li.hidden) n++;
+        });
+        $('#chantiers-vide').hidden = n > 0;
+      };
+    }
     if (page === '' && $('#loupe')) {
       const inp = $('#loupe');
       const box = $('#loupe-res');
