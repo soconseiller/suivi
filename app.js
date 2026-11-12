@@ -2947,6 +2947,31 @@
   };
 
   function apresAffichage(page) {
+    // Pages par étape : petite recherche au-dessus de la liste
+    if (['devis', 'relances', 'commandes', 'planning', 'facturer'].indexOf(page) >= 0 && document.querySelector('#main .item')) {
+      const tete = document.querySelector('#main .page-head');
+      const zone = document.createElement('div');
+      zone.className = 'loupe';
+      zone.style.marginBottom = '16px';
+      zone.innerHTML = '<input type="search" id="liste-q" placeholder="Rechercher dans cette liste : client, commune, n° de devis, chantier…" autocomplete="off" aria-label="Rechercher dans la liste">' +
+        '<p class="muted small" id="liste-vide" hidden style="margin:8px 0 0">Aucun dossier ne correspond.</p>';
+      if (tete) tete.after(zone); else $('#main').prepend(zone);
+      S.filtreListe = S.filtreListe || {};
+      const champ = $('#liste-q');
+      const filtrer = () => {
+        S.filtreListe[page] = champ.value;
+        const mots = sansAccent(champ.value).split(/\s+/).filter(Boolean);
+        let n = 0;
+        document.querySelectorAll('#main .item').forEach((it) => {
+          it.hidden = !mots.every((m) => sansAccent(it.textContent).indexOf(m) >= 0);
+          if (!it.hidden) n++;
+        });
+        $('#liste-vide').hidden = n > 0;
+      };
+      champ.value = S.filtreListe[page] || '';
+      champ.oninput = filtrer;
+      if (champ.value) filtrer();
+    }
     if (page === '' && $('#chantiers-q')) {
       $('#chantiers-q').oninput = (ev) => {
         const mots = sansAccent(ev.target.value).split(/\s+/).filter(Boolean);
