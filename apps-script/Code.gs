@@ -25,7 +25,7 @@ const CONFIG = {
 
 const NOM_APPLI = 'Elec Habitat';
 // Numéro de version, affiché en bas du menu de l'appli (pour vérifier que le dernier déploiement est en service)
-const VERSION_PROGRAMME = '2026-11-12 n°15';
+const VERSION_PROGRAMME = '2026-11-12 n°16';
 
 /* ==================================================================
  * 1. STRUCTURE DES DONNÉES
@@ -471,6 +471,8 @@ function router_(action, d, user) {
     enregistrerUtilisateurs: function () { return enregistrerUtilisateurs_(d.users); },
     enregistrerAccesDocs: function () { return enregistrerAccesDocs_(d); },
     importKraaft: function () { adminSeul_(user); return importKraaft_(d, user); },
+    kraaftCle: function () { adminSeul_(user); return enregistrerCleKraaft_(d); },
+    kraaftExplorer: function () { adminSeul_(user); return explorerKraaft_(); },
     mailTest: function () { return mailTest_(d.cle, user); },
     smsTest: function () { return smsTest_(d, user); },
     enregistrerAppareil: function () { return enregistrerAppareil_(d, user); },
@@ -573,6 +575,7 @@ function boot_(user) {
   regPublics.smsCleOk = reg.smsCle ? 'oui' : 'non';
   const compteFcm = compteFirebase_();
   regPublics.firebaseOk = compteFcm ? 'oui' : 'non';
+  regPublics.kraaftOk = PropertiesService.getScriptProperties().getProperty('KRAAFT_CLE') ? 'oui' : 'non';
   regPublics.firebaseProjet = compteFcm ? compteFcm.project_id : '';
   const appareils = all_('Appareils');
   const dossiers = all_('Dossiers');
@@ -1539,6 +1542,85 @@ function cocherAgenda_(eventKey) {
  *   terminer: { date } (chantier « Terminé » dans Kraaft : le dossier part dans les archives)
  * }
  * ================================================================ */
+/* ================================================================
+ * API KRAAFT (https://api.kraaft.co, clé « Bearer » créée dans les réglages de l'espace Kraaft)
+ * La clé reste dans les propriétés du programme : elle n'est jamais renvoyée aux écrans.
+ * ================================================================ */
+function kraaftApi_(chemin, params, cle) {
+  cle = cle || PropertiesService.getScriptProperties().getProperty('KRAAFT_CLE');
+  if (!cle) throw erreur_('Clé API Kraaft non enregistrée (Réglages > Reprise Kraaft).');
+  const qs = Object.keys(params || {}).filter(function (k) { return params[k] !== undefined && params[k] !== ''; })
+    .map(function (k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
+  const r = UrlFetchApp.fetch('https://api.kraaft.co/v1/' + chemin + (qs ? '?' + qs : ''), {
+    headers: { Authorization: 'Bearer ' + cle }, muteHttpExceptions: true
+  });
+  const code = r.getResponseCode();
+  let json = null;
+  try { json = JSON.parse(r.getContentText() || 'null'); } catch (e) { json = null; }
+  if (code >= 400) {
+    const msg = (json && (json.error || json.message)) || r.getContentText().slice(0, 200);
+    throw erreur_('Kraaft répond ' + code + (code === 401 ? ' (clé refusée)' : code === 403 ? ' (accès refusé)' : '') + ' : ' + msg);
+  }
+  const h = r.getAllHeaders();
+  const hv = function (n) { const k = Object.keys(h).filter(function (x) { return x.toLowerCase() === n; })[0]; return k ? String(h[k]) : ''; };
+  return { json: json, suite: hv('x-kraaft-next-cursor'), encore: hv('x-kraaft-has-more') === 'true' };
+}
+
+/** Enregistre la clé API Kraaft après l'avoir essayée */
+function enregistrerCleKraaft_(d) {
+  const cle = String(d.cle || '').trim();
+  const props = PropertiesService.getScriptProperties();
+  if (!cle) { props.deleteProperty('KRAAFT_CLE'); props.deleteProperty('KRAAFT_WS'); return { ok: true, efface: true }; }
+  const ws = kraaftApi_('workspaces', null, cle).json || [];
+  if (!ws.length) throw erreur_('La clé est acceptée, mais aucun espace Kraaft n\'est accessible (l\'API est-elle bien activée ?).');
+  props.setProperty('KRAAFT_CLE', cle);
+  props.setProperty('KRAAFT_WS', ws[0].workspaceId);
+  return { ok: true, espace: ws[0].workspaceName };
+}
+
+/** Premier tour d'horizon de l'espace Kraaft : sert à préparer la reprise complète */
+function explorerKraaft_() {
+  const ws = PropertiesService.getScriptProperties().getProperty('KRAAFT_WS');
+  if (!ws) throw erreur_('Enregistrez d\'abord la clé API Kraaft.');
+  const out = { espace: ws };
+  out.schemas = (kraaftApi_('workspaces/' + ws + '/schemas').json || []).map(function (x) { return x.schemaName + ' [' + x.schemaId + ']'; });
+  const sch = kraaftApi_('workspaces/' + ws + '/schemas/room').json || {};
+  out.champsConversation = Object.keys(sch.fields || {}).map(function (k) {
+    const f = sch.fields[k];
+    return k + ' : ' + f.name + ' (' + f.type + (f.options ? ' — ' + f.options.map(function (o) { return o.label; }).join(' / ') : '') + ')';
+  });
+  // Toutes les conversations (pages de 500)
+  const rooms = [];
+  let suite = '';
+  for (let i = 0; i < 20; i++) {
+    const r = kraaftApi_('workspaces/' + ws + '/schemas/room/records', { limit: 500, after: suite });
+    (r.json || []).forEach(function (x) { rooms.push(x); });
+    if (!r.encore || !r.suite) break;
+    suite = r.suite;
+  }
+  out.nbConversations = rooms.length;
+  const libelle = function (k, v) {
+    const f = (sch.fields || {})[k];
+    if (f && f.options) return (f.options.filter(function (o) { return o.id === v; })[0] || {}).label || v;
+    return typeof v === 'object' ? JSON.stringify(v) : v;
+  };
+  out.exemples = rooms.slice(0, 3).map(function (x) {
+    const p = {};
+    Object.keys(x.properties || {}).forEach(function (k) { p[k] = libelle(k, x.properties[k].value); });
+    return { recordId: x.recordId, roomId: x.roomId, creee: x.createdAt, proprietes: p };
+  });
+  if (rooms.length) {
+    const m = kraaftApi_('workspaces/' + ws + '/rooms/' + rooms[0].roomId + '/messages', { limit: 8 }).json || [];
+    out.messagesExemple = m.map(function (x) {
+      const c = x.content || {};
+      return { id: x.messageId, auteur: x.senderId, date: x.createdAt, type: c.type, texte: c.text ? String(c.text).slice(0, 60) : '', fichier: c.file ? c.file.filename : '' };
+    });
+    const room = kraaftApi_('workspaces/' + ws + '/rooms/' + rooms[0].roomId).json || {};
+    out.conversationExemple = { nom: room.name, archivee: room.archived, privee: room.private, membres: (room.members || []).length, creee: room.createdAt };
+  }
+  return out;
+}
+
 function importKraaft_(d, user) {
   const dos = dossierOuErreur_(d.dossierId);
   const debut = Date.now();

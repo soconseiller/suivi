@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-12 n°15';
+  const VERSION_ECRANS = '2026-11-12 n°16';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -1863,6 +1863,14 @@
     return '<div class="card"><h2>Reprise Kraaft</h2><p class="muted small" style="margin-top:0">Reprend dans un dossier tout le contenu d\'une conversation Kraaft : ' +
       'les messages, photos et fichiers de la discussion (avec leur auteur et leur date d\'origine, marqués « (Kraaft) ») et les documents classés (Plans, DICT, Arrêtés…). ' +
       'Les fichiers sont téléchargés depuis Kraaft et rangés dans le dossier Google Drive du chantier. Relancer la reprise ne crée pas de doublon.</p>' +
+      '<h3 style="margin:12px 0 4px">Connexion directe (API Kraaft)</h3>' +
+      '<p class="small muted" style="margin:0 0 6px">' + (S.data.reglages.kraaftOk === 'oui' ? '✅ Clé API enregistrée.' : 'Aucune clé enregistrée.') +
+      ' La clé se crée dans Kraaft, dans les paramètres de l\'espace. Elle reste dans le programme Google et n\'est jamais réaffichée.</p>' +
+      '<label class="field"><span>Clé API Kraaft</span><input type="password" id="kraaft-cle" autocomplete="off" placeholder="' + (S.data.reglages.kraaftOk === 'oui' ? 'Clé enregistrée (en coller une autre pour la remplacer)' : 'Coller la clé ici') + '"></label>' +
+      '<div class="actions"><button class="btn" data-act="kraaftCle">Enregistrer la clé</button>' +
+      (S.data.reglages.kraaftOk === 'oui' ? '<button class="btn" data-act="kraaftExplorer">Tester et explorer Kraaft</button>' : '') + '</div>' +
+      '<pre id="kraaft-explo" class="small" style="white-space:pre-wrap;max-height:360px;overflow:auto" hidden></pre>' +
+      '<h3 style="margin:12px 0 4px">Reprise par fichier</h3>' +
       '<label class="field"><span>Fichier de reprise Kraaft (.json)</span><input type="file" id="kraaft-fichier" accept=".json,application/json"></label>' +
       '<label class="field"><span>Dossier de l\'appli à compléter</span><select id="kraaft-dossier"><option value="">Choisir un dossier…</option>' +
       ds.map((d) => '<option value="' + esc(d.id) + '">' + esc(nomClient(d)) + (d.lieu ? ' · ' + esc(d.lieu) : '') + '</option>').join('') + '</select></label>' +
@@ -2747,6 +2755,20 @@
       () => agir('demoCharger', {}, 'Démonstration chargée')),
     demoSupprimer: () => FORMS.confirmer('Supprimer la démonstration ?', 'Les dossiers marqués « démo » seront supprimés. Les vrais dossiers ne sont pas touchés.', 'Supprimer',
       () => agir('demoSupprimer', {}, 'Démonstration supprimée'), 'danger'),
+    kraaftCle: () => essayer(async () => {
+      const cle = ($('#kraaft-cle').value || '').trim();
+      if (!cle) { toast('Collez d\'abord la clé API Kraaft.', true); return; }
+      const r = await api('kraaftCle', { cle });
+      toast('Clé Kraaft enregistrée et vérifiée' + (r.espace ? ' (espace « ' + r.espace + ' »)' : ''));
+      await afficher();
+    }),
+    kraaftExplorer: () => essayer(async () => {
+      const zone = $('#kraaft-explo');
+      zone.hidden = false;
+      zone.textContent = 'Lecture de Kraaft en cours…';
+      const r = await api('kraaftExplorer', {});
+      zone.textContent = JSON.stringify(r, null, 2);
+    }),
     kraaftImport: () => essayer(async () => {
       const k = await lireFichierKraaft();
       if (!k) throw new Error('Choisissez d\'abord le fichier de reprise Kraaft.');
