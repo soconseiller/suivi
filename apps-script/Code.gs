@@ -25,7 +25,7 @@ const CONFIG = {
 
 const NOM_APPLI = 'Elec Habitat';
 // Numéro de version, affiché en bas du menu de l'appli (pour vérifier que le dernier déploiement est en service)
-const VERSION_PROGRAMME = '2026-11-12 n°18';
+const VERSION_PROGRAMME = '2026-11-12 n°19';
 
 /* ==================================================================
  * 1. STRUCTURE DES DONNÉES
@@ -449,6 +449,7 @@ function router_(action, d, user) {
     creerDossier: function () { return creerDossier_(d, user); },
     supprimerDossier: function () { return supprimerDossier_(d, user); },
     supprimerDossiers: function () { return supprimerDossiers_(d, user); },
+    fusionnerDossiers: function () { return fusionnerDossiers_(d, user); },
     supprimerCommande: function () { return supprimerCommande_(d, user); },
     receptionCommande: function () { return receptionCommande_(d, user); },
     enregistrerPV: function () { return enregistrerPV_(d, user); },
@@ -1331,6 +1332,98 @@ function supprimerDossiers_(d, user) {
   return { supprimes: n };
 }
 
+/* ---------- Fusion de dossiers ---------- */
+
+/** Conversations Kraaft reliées à un dossier (plusieurs possibles après une fusion) */
+function idsKraaft_(dos) {
+  return String(dos.kraaft || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+}
+
+/** Rendez-vous d'agenda des dossiers absorbés par une fusion : { cléAgenda: dossier gardé } (évite qu'ils reviennent) */
+function clesFusionnees_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('FUSION_CLES') || '{}'); } catch (e) { return {}; }
+}
+
+/** Remplace un numéro de dossier par un autre dans toute une feuille, en une seule écriture */
+function rattacherLignes_(name, anciens, nouveau) {
+  const sh = sheet_(name);
+  const der = sh.getLastRow();
+  if (der < 2) return 0;
+  const col = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].indexOf('dossierId');
+  if (col < 0) return 0;
+  const zone = sh.getRange(2, col + 1, der - 1, 1);
+  const vals = zone.getDisplayValues();
+  let n = 0;
+  vals.forEach(function (v) { if (anciens.indexOf(String(v[0])) >= 0) { v[0] = nouveau; n++; } });
+  if (n) zone.setValues(vals);
+  delete CACHE_[name];
+  return n;
+}
+
+/**
+ * Fusionne des dossiers dans un dossier principal : discussion, documents, commandes, factures, interventions,
+ * historique et présences passent dans le dossier principal ; les champs vides du principal sont complétés.
+ * Les dossiers absorbés disparaissent ensuite. Réservé aux administrateurs.
+ */
+function fusionnerDossiers_(d, user) {
+  const principal = dossierOuErreur_(d.principal);
+  const ids = (d.autres || []).map(String).filter(function (x) { return x && x !== principal.id; });
+  if (!ids.length) throw erreur_('Cochez au moins un dossier à fusionner.');
+  if (Number(d.nombre) !== ids.length + 1) throw erreur_('Le nombre tapé ne correspond pas au nombre total de dossiers (' + (ids.length + 1) + ').');
+  const autres = ids.map(dossierOuErreur_);
+  // 1. Champs : on complète ce qui est vide dans le principal
+  const patch = {};
+  const garder = ['id', 'etape', 'eventKey', 'creeLe', 'majLe', 'demo', 'kraaft', 'descriptionRdv', 'avancement', 'source'];
+  SCHEMA.Dossiers.forEach(function (k) {
+    if (garder.indexOf(k) >= 0 || String(principal[k] || '') !== '') return;
+    const v = autres.map(function (a) { return a[k]; }).filter(function (x) { return String(x || '') !== ''; })[0];
+    if (v !== undefined) patch[k] = v;
+  });
+  const descs = [principal.descriptionRdv].concat(autres.map(function (a) { return a.descriptionRdv; }))
+    .filter(function (x, i, t) { return x && t.indexOf(x) === i; });
+  if (descs.length > 1) patch.descriptionRdv = descs.join('\n\n');
+  const kraaft = idsKraaft_(principal);
+  autres.forEach(function (a) { idsKraaft_(a).forEach(function (k) { if (kraaft.indexOf(k) < 0) kraaft.push(k); }); });
+  if (kraaft.join(',') !== String(principal.kraaft || '')) patch.kraaft = kraaft.join(',');
+  // 2. Tout ce qui est rattaché passe dans le dossier principal
+  ['Commandes', 'Factures', 'Commentaires', 'Documents', 'Interventions', 'Historique'].forEach(function (name) {
+    rattacherLignes_(name, ids, principal.id);
+  });
+  // Présences : les chantiers cités dans les journées
+  lireTable_('Pointages').forEach(function (p) {
+    if (!p.lieux || !ids.some(function (id) { return p.lieux.indexOf(id) >= 0; })) return;
+    let lieux = p.lieux;
+    ids.forEach(function (id) { lieux = lieux.split('"' + id + '"').join('"' + principal.id + '"'); });
+    update_('Pointages', 'id', p.id, { lieux: lieux });
+  });
+  // 3. Les fichiers Drive rejoignent le dossier du principal
+  let deplaces = 0;
+  try {
+    const dossierCible = (principal.dossierDrive || patch.dossierDrive) ? DriveApp.getFolderById(principal.dossierDrive || patch.dossierDrive) : null;
+    if (dossierCible) {
+      autres.forEach(function (a) {
+        if (!a.dossierDrive || a.dossierDrive === dossierCible.getId()) return;
+        try {
+          const src = DriveApp.getFolderById(a.dossierDrive);
+          const it = src.getFiles();
+          while (it.hasNext()) { it.next().moveTo(dossierCible); deplaces++; }
+          src.setTrashed(true);
+        } catch (e) { Logger.log('Fusion Drive : ' + e); }
+      });
+    }
+  } catch (e) { Logger.log('Fusion Drive : ' + e); }
+  // 4. Les rendez-vous d'agenda des dossiers absorbés ne doivent pas recréer de dossier
+  const cles = clesFusionnees_();
+  autres.forEach(function (a) { if (a.eventKey) cles[a.eventKey] = principal.id; });
+  PropertiesService.getScriptProperties().setProperty('FUSION_CLES', JSON.stringify(cles));
+  // 5. On enregistre et on retire les dossiers absorbés
+  majDossier_(principal.id, patch);
+  autres.forEach(function (a) { delete_('Dossiers', 'id', a.id); });
+  log_(principal.id, user, 'Fusion de dossiers', autres.map(function (a) { return a.client || a.titreRdv; }).join(', ') + ' → ' + (principal.client || principal.titreRdv));
+  try { majTemps_(principal.id); } catch (e) { /* calcul des temps : sans gravité */ }
+  return { fusionnes: autres.length, fichiersDeplaces: deplaces };
+}
+
 /** Efface un dossier et tout ce qui lui est rattaché ; ses fichiers Drive vont à la corbeille si demandé (récupérables 30 jours) */
 function effacerDossier_(dos, user, motif, fichiers) {
   supprimerInterventions_(dos.id);
@@ -1471,7 +1564,7 @@ function scannerAgenda_() {
   const debut = ajouterJours_(jour_(now), -Number(reg.joursAgendaPasse || 60));
   const fin = ajouterJours_(jour_(now), Number(reg.joursAgendaFutur || 60));
   const events = agenda_().getEvents(debut, fin);
-  const connus = {};
+  const connus = clesFusionnees_();
   all_('Dossiers').forEach(function (d) { if (d.eventKey) connus[d.eventKey] = true; });
   let n = 0;
   events.forEach(function (ev) {
@@ -1664,7 +1757,7 @@ function conversationsKraaft_() {
     return v;
   };
   const lies = {};
-  all_('Dossiers').forEach(function (d) { if (d.kraaft) lies[d.kraaft] = d.id; });
+  all_('Dossiers').forEach(function (d) { idsKraaft_(d).forEach(function (k) { lies[k] = d.id; }); });
   const out = [];
   let suite = '';
   for (let i = 0; i < 20; i++) {
@@ -1730,7 +1823,7 @@ function reprendreKraaft_(d, user) {
   const roomId = String(d.roomId || '');
   if (!roomId) throw erreur_('Conversation Kraaft manquante.');
   const statut = String(d.statut || '');
-  let dos = all_('Dossiers').filter(function (x) { return x.kraaft === roomId; })[0];
+  let dos = all_('Dossiers').filter(function (x) { return idsKraaft_(x).indexOf(roomId) >= 0; })[0];
   // Création du dossier
   if (!dos) {
     const room = kraaftApi_('workspaces/' + ws + '/rooms/' + roomId).json || {};
@@ -1868,7 +1961,7 @@ function syncKraaft_(forcer) {
   }
   const ws = props.getProperty('KRAAFT_WS');
   const parRoom = {};
-  all_('Dossiers').forEach(function (x) { if (x.kraaft) parRoom[x.kraaft] = x.id; });
+  all_('Dossiers').forEach(function (x) { idsKraaft_(x).forEach(function (k) { parRoom[k] = x.id; }); });
   const auteurs = auteursKraaft_();
   const inconnus = JSON.parse(props.getProperty('KRAAFT_INCONNUS') || '{}');
   let curseur = props.getProperty('KRAAFT_CURSEUR') || new Date().toISOString();
@@ -3147,7 +3240,7 @@ function chercherAgenda_(d) {
   const du = d.du ? ajouterJours_(d.du, 0) : ajouterJours_(new Date(), -180);
   const au = d.au ? ajouterJours_(d.au, 1) : ajouterJours_(new Date(), 180);
   if (ecartJours_(du, au) > 800) throw erreur_('Période trop longue (2 ans au maximum).');
-  const connus = {};
+  const connus = clesFusionnees_();
   all_('Dossiers').forEach(function (x) { if (x.eventKey) connus[x.eventKey] = x.id; });
   const out = [];
   agenda_().getEvents(du, au).forEach(function (ev) {

@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-12 n°18';
+  const VERSION_ECRANS = '2026-11-12 n°19';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -911,6 +911,7 @@
         '<li><span class="when">' + fr(h.date) + '</span><span><strong>' + esc(h.action) + '</strong>' + (h.note ? ' – ' + esc(h.note) : '') + ' <span class="muted">· ' + esc(h.qui) + '</span></span></li>').join('') + '</ul></div>' +
       '<div class="card"><h2>Statut du dossier</h2><p class="muted small" style="margin-top:0">En cas d\'erreur, revenez à l\'étape précédente ou supprimez le dossier. Chaque changement est noté dans l\'historique avec son motif.</p>' +
       '<div class="actions">' + (btnRetour(d) ? btnRetour(d).replace('btn ghost', 'btn') : '<span class="muted small">Première étape : pas de retour possible.</span>') +
+      '<button class="btn" data-act="fusionDossier" data-id="' + d.id + '">Fusionner avec d\'autres dossiers</button>' +
       '<button class="btn danger" data-act="supprDossier" data-id="' + d.id + '">Supprimer le dossier</button></div></div>' +
       '</div></div>';
   }
@@ -2528,6 +2529,37 @@
     confirmer(titre, texte, bouton, fn, classe) {
       fenetre({ titre, corps: '<p>' + texte + '</p>', bouton, classe: classe || 'primary', valider: fn });
     },
+    /** Fusion : d'autres dossiers sont rassemblés dans celui-ci (le dossier ouvert est gardé) */
+    fusion(d) {
+      const autres = S.data.dossiers.filter((x) => x.id !== d.id)
+        .sort((a, b) => ((b.majLe || '') > (a.majLe || '') ? 1 : -1));
+      fenetre({
+        titre: 'Fusionner avec « ' + nomClient(d) + ' »',
+        corps: '<p>Cochez les dossiers à rassembler dans celui-ci. Tout passe dans <strong>' + esc(nomClient(d)) + '</strong> : discussion, photos et documents, ' +
+          'matériel, factures, interventions, historique et journées des techniciens. Les informations manquantes de ce dossier sont complétées avec celles des autres. ' +
+          'Son étape ne change pas. <strong>Les dossiers cochés disparaissent ensuite</strong> (leurs chantiers Kraaft restent reliés).</p>' +
+          '<input type="search" id="fusion-q" placeholder="Filtrer : nom, commune, n° de devis…" autocomplete="off" style="margin:6px 0 8px">' +
+          '<ul class="mini-list" id="fusion-liste" style="max-height:260px;overflow-y:auto;margin:0 0 10px">' +
+          autres.map((x) => '<li data-cherche="' + esc(sansAccent([nomClient(x), x.chantier, x.lieu, x.numDevis, x.titreRdv].join(' '))) + '">' +
+            '<label class="check" style="margin:0"><input type="checkbox" name="fusionId" value="' + esc(x.id) + '"> <span><strong>' + esc(nomClient(x)) + '</strong>' +
+            (x.chantier ? ' – ' + esc(x.chantier) : '') + ' <span class="muted small">· ' + esc(ETAPES()[x.etape] || x.etape) + (x.dateRdv ? ' · ' + fr(x.dateRdv) : '') +
+            (x.kraaft ? ' · Kraaft' : '') + '</span></span></label></li>').join('') + '</ul>' +
+          champ('Pour confirmer, tapez le nombre total de dossiers concernés (celui-ci compris) *', '<input type="text" name="nombre" autocomplete="off" placeholder="Ex. : 2">',
+            'Avec 1 dossier coché, tapez 2.'),
+        bouton: 'Fusionner',
+        valider: async (v) => {
+          const ids = Array.from(document.querySelectorAll('[name=fusionId]:checked')).map((x) => x.value);
+          if (!ids.length) throw new Error('Cochez au moins un dossier à fusionner.');
+          if (String(v.nombre || '').trim() !== String(ids.length + 1)) throw new Error('Tapez « ' + (ids.length + 1) + ' » pour confirmer (' + ids.length + ' dossier(s) coché(s) + celui-ci).');
+          await agir('fusionnerDossiers', { principal: d.id, autres: ids, nombre: ids.length + 1 }, 'Dossiers fusionnés');
+        }
+      });
+      const q = $('#fusion-q');
+      if (q) q.oninput = () => {
+        const mots = sansAccent(q.value).split(/\s+/).filter(Boolean);
+        document.querySelectorAll('#fusion-liste li').forEach((li) => { li.hidden = !mots.every((m) => li.dataset.cherche.indexOf(m) >= 0); });
+      };
+    },
     /** Suppression d'un ou plusieurs dossiers complets, avec double confirmation */
     suppression(dossiers) {
       const n = dossiers.length;
@@ -2793,6 +2825,7 @@
       const d = parId(el.dataset.id);
       FORMS.suppression([d]);
     },
+    fusionDossier: (el) => FORMS.fusion(parId(el.dataset.id)),
     supprSelection: () => {
       const ids = Array.from(document.querySelectorAll('[name=supprDos]:checked')).map((x) => x.value);
       if (!ids.length) { toast('Cochez d\'abord les dossiers à supprimer.', true); return; }
