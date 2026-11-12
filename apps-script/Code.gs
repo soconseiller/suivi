@@ -25,7 +25,7 @@ const CONFIG = {
 
 const NOM_APPLI = 'Elec Habitat';
 // Numéro de version, affiché en bas du menu de l'appli (pour vérifier que le dernier déploiement est en service)
-const VERSION_PROGRAMME = '2026-11-12 n°16';
+const VERSION_PROGRAMME = '2026-11-12 n°17';
 
 /* ==================================================================
  * 1. STRUCTURE DES DONNÉES
@@ -347,6 +347,7 @@ function chaqueHeure() {
     }
     // Interventions déplacées ou supprimées directement dans l'agenda
     try { synchroAgenda_(); noterAgenda_(null); } catch (e) { Logger.log('Synchro agenda : ' + e); noterAgenda_(e); }
+    try { syncKraaft_(); } catch (e) { Logger.log('Synchro Kraaft : ' + e); }
     try { majTempsChantiers_(); } catch (e) { Logger.log('Temps des chantiers : ' + e); }
     lancerRelances_(new Date());
   } finally {
@@ -473,6 +474,10 @@ function router_(action, d, user) {
     importKraaft: function () { adminSeul_(user); return importKraaft_(d, user); },
     kraaftCle: function () { adminSeul_(user); return enregistrerCleKraaft_(d); },
     kraaftExplorer: function () { adminSeul_(user); return explorerKraaft_(); },
+    kraaftConversations: function () { adminSeul_(user); return conversationsKraaft_(); },
+    kraaftReprendre: function () { adminSeul_(user); return reprendreKraaft_(d, user); },
+    kraaftAuteurs: function () { adminSeul_(user); return nommerAuteursKraaft_(d); },
+    kraaftSync: function () { adminSeul_(user); return reglerSyncKraaft_(d); },
     mailTest: function () { return mailTest_(d.cle, user); },
     smsTest: function () { return smsTest_(d, user); },
     enregistrerAppareil: function () { return enregistrerAppareil_(d, user); },
@@ -1619,6 +1624,238 @@ function explorerKraaft_() {
     out.conversationExemple = { nom: room.name, archivee: room.archived, privee: room.private, membres: (room.members || []).length, creee: room.createdAt };
   }
   return out;
+}
+
+/* ---------- Reprise et synchronisation par l'API ---------- */
+
+const KRAAFT_ETAPES = { 'Non-Assigné': 'devis_a_faire', 'En cours': 'en_cours', 'Terminé': 'facture' };
+
+function kraaftEspace_() {
+  const ws = PropertiesService.getScriptProperties().getProperty('KRAAFT_WS');
+  if (!ws) throw erreur_('Enregistrez d\'abord la clé API Kraaft.');
+  return ws;
+}
+
+/** Noms des personnes Kraaft : { identifiant: nom } (l'API ne donne que les identifiants) */
+function auteursKraaft_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('KRAAFT_AUTEURS') || '{}'); } catch (e) { return {}; }
+}
+function ecrireAuteursKraaft_(a) {
+  PropertiesService.getScriptProperties().setProperty('KRAAFT_AUTEURS', JSON.stringify(a));
+}
+/** Nom provisoire d'une personne pas encore nommée */
+function nomProvisoireKraaft_(id) {
+  return 'Membre Kraaft ' + String(id || '?').slice(-4);
+}
+
+/** Schéma des conversations Kraaft (pour traduire les statuts) */
+function schemaConversationKraaft_(ws) {
+  const sch = kraaftApi_('workspaces/' + ws + '/schemas/room').json || {};
+  return sch.fields || {};
+}
+
+/** Liste des conversations Kraaft, avec le dossier de l'appli qui leur correspond déjà */
+function conversationsKraaft_() {
+  const ws = kraaftEspace_();
+  const champs = schemaConversationKraaft_(ws);
+  const lib = function (k, v) {
+    const f = champs[k];
+    if (f && f.options) return (f.options.filter(function (o) { return o.id === v; })[0] || {}).label || '';
+    return v;
+  };
+  const lies = {};
+  all_('Dossiers').forEach(function (d) { if (d.kraaft) lies[d.kraaft] = d.id; });
+  const out = [];
+  let suite = '';
+  for (let i = 0; i < 20; i++) {
+    const r = kraaftApi_('workspaces/' + ws + '/schemas/room/records', { limit: 500, after: suite });
+    (r.json || []).forEach(function (x) {
+      const p = x.properties || {};
+      const v = function (k) { return p[k] ? p[k].value : ''; };
+      const g = v('geolocation') || {};
+      out.push({
+        roomId: x.roomId, titre: v('title') || '(sans titre)', statut: lib('status', v('status')) || 'Non-Assigné',
+        description: v('description') || '', lat: g.lat || '', lng: g.lng || '', responsable: v('responsible') || '',
+        creee: x.createdAt || '', dossierId: lies[x.roomId] || ''
+      });
+    });
+    if (!r.encore || !r.suite) break;
+    suite = r.suite;
+  }
+  out.sort(function (a, b) { return String(b.creee).localeCompare(String(a.creee)); });
+  const props = PropertiesService.getScriptProperties();
+  return {
+    conversations: out,
+    auteurs: auteursKraaft_(),
+    inconnus: JSON.parse(props.getProperty('KRAAFT_INCONNUS') || '{}'),
+    sync: props.getProperty('KRAAFT_SYNC') === 'oui'
+  };
+}
+
+/** Transforme un message de l'API en message pour importKraaft_ ; apprend les noms au passage */
+function messageKraaft_(roomId, id, senderId, date, c, auteurs, inconnus) {
+  c = c || {};
+  let texte = c.text ? String(c.text) : '';
+  if (c.type === 'geolocation' && c.geolocation) {
+    const g = c.geolocation;
+    texte = '📍 ' + ((g.address && (g.address.description || g.address.formatted)) || (typeof g.address === 'string' ? g.address : '') || 'Position') +
+      (g.latitude ? '\nhttps://maps.google.com/?q=' + g.latitude + ',' + g.longitude : '') + (texte ? '\n' + texte : '');
+  }
+  let fichier = null;
+  if (c.file && c.file.url) {
+    const d = new Date(date);
+    const ext = (String(c.file.filename || '').match(/\.[a-z0-9]{2,5}$/i) || [''])[0];
+    const estImage = c.type === 'image' || /\.(jpe?g|png|heic|webp|gif)$/i.test(ext);
+    fichier = {
+      url: c.file.url,
+      nom: estImage ? 'Photo ' + Utilities.formatDate(d, tz_(), "yyyy-MM-dd HH'h'mm") + (ext || '.jpg') : (c.file.filename || 'fichier'),
+      mime: ''
+    };
+  }
+  let auteur = auteurs[senderId];
+  if (!auteur) {
+    auteur = nomProvisoireKraaft_(senderId);
+    if (senderId && !inconnus[senderId]) inconnus[senderId] = { exemple: String(texte || (fichier ? fichier.nom : '')).slice(0, 80), roomId: roomId };
+  }
+  return { kid: 'kraaft:' + id, auteur: auteur, date: date, texte: texte, fichier: fichier };
+}
+
+/**
+ * Reprend une conversation Kraaft dans l'appli (crée le dossier s'il n'existe pas).
+ * Appelée plusieurs fois de suite si la conversation est longue (stop >= 0) ; jamais de doublon.
+ */
+function reprendreKraaft_(d, user) {
+  const ws = kraaftEspace_();
+  const roomId = String(d.roomId || '');
+  if (!roomId) throw erreur_('Conversation Kraaft manquante.');
+  const statut = String(d.statut || '');
+  let dos = all_('Dossiers').filter(function (x) { return x.kraaft === roomId; })[0];
+  // Création du dossier
+  if (!dos) {
+    const room = kraaftApi_('workspaces/' + ws + '/rooms/' + roomId).json || {};
+    const now = new Date();
+    const cree = d.creee ? new Date(d.creee) : now;
+    const etape = KRAAFT_ETAPES[statut] || 'devis_a_faire';
+    const id = nouvelId_('D');
+    dos = {
+      id: id, eventKey: '', dateRdv: jour_(cree), heureRdv: '', titreRdv: 'Repris de Kraaft',
+      lieu: '', descriptionRdv: [d.description, 'Repris de Kraaft (statut : ' + (statut || 'Non-Assigné') + ').'].filter(Boolean).join(' '),
+      client: String(d.titre || room.name || 'Chantier Kraaft').trim(), etape: etape, avancement: etape === 'facture' ? '100' : '0',
+      demo: 'non', creeLe: horodatage_(now), majLe: horodatage_(now), source: 'kraaft', kraaft: roomId
+    };
+    if (etape !== 'devis_a_faire') { dos.numDevis = 'KRAAFT'; dos.dateDevis = jour_(cree); dos.dateValidation = jour_(cree); }
+    if (etape === 'en_cours') dos.dateDebut = jour_(cree);
+    insert_('Dossiers', dos);
+    if (d.lat && d.lng) {
+      const lieu = adresseDePosition_(Number(d.lat), Number(d.lng));
+      poserPosition_(id, Number(d.lat), Number(d.lng), lieu || undefined);
+    }
+    log_(id, user, 'Dossier repris de Kraaft', dos.client);
+    dos = trouver_('Dossiers', 'id', id);
+  }
+  // Messages (du plus récent au plus ancien dans l'API : on remet dans l'ordre)
+  const brut = [];
+  let suite = '';
+  for (let i = 0; i < 40; i++) {
+    const r = kraaftApi_('workspaces/' + ws + '/rooms/' + roomId + '/messages', { limit: 500, after: suite });
+    (r.json || []).forEach(function (m) { brut.push(m); });
+    if (!r.encore || !r.suite) break;
+    suite = r.suite;
+  }
+  brut.reverse();
+  const auteurs = auteursKraaft_();
+  const props = PropertiesService.getScriptProperties();
+  const inconnus = JSON.parse(props.getProperty('KRAAFT_INCONNUS') || '{}');
+  // Les messages déjà repris (par fichier) apprennent les noms
+  const parKid = {};
+  all_('Commentaires').forEach(function (c) { if (c.kraaft && c.dossierId === dos.id) parKid[c.kraaft] = c.auteur; });
+  let appris = false;
+  brut.forEach(function (m) {
+    const nom = parKid['kraaft:' + m.messageId];
+    if (nom && m.senderId && !auteurs[m.senderId] && !/^Membre Kraaft /.test(nom)) {
+      auteurs[m.senderId] = String(nom).replace(/ \(Kraaft\)$/, '');
+      delete inconnus[m.senderId];
+      appris = true;
+    }
+  });
+  if (appris) ecrireAuteursKraaft_(auteurs);
+  const messages = brut.map(function (m) { return messageKraaft_(roomId, m.messageId, m.senderId, m.createdAt, m.content, auteurs, inconnus); });
+  props.setProperty('KRAAFT_INCONNUS', JSON.stringify(inconnus));
+  const res = importKraaft_({ dossierId: dos.id, kraaftId: roomId, messages: messages }, user);
+  // Chantier terminé : date de fin = dernier message
+  if (res.stop < 0 && !res.erreurs.length && (KRAAFT_ETAPES[statut] === 'facture') && !dos.dateCloture) {
+    const fin = brut.length ? jour_(new Date(brut[brut.length - 1].createdAt)) : jour_(new Date());
+    majDossier_(dos.id, { etape: 'facture', avancement: '100', dateFinChantier: fin, dateCloture: fin });
+  }
+  res.dossierId = dos.id;
+  res.total = messages.length;
+  return res;
+}
+
+/** Donne un nom aux personnes Kraaft et corrige les messages déjà repris */
+function nommerAuteursKraaft_(d) {
+  const auteurs = auteursKraaft_();
+  const props = PropertiesService.getScriptProperties();
+  const inconnus = JSON.parse(props.getProperty('KRAAFT_INCONNUS') || '{}');
+  const noms = d.noms || {};
+  let corriges = 0;
+  Object.keys(noms).forEach(function (id) {
+    const nom = String(noms[id] || '').trim();
+    if (!nom) return;
+    const ancien = auteurs[id] || nomProvisoireKraaft_(id);
+    auteurs[id] = nom;
+    delete inconnus[id];
+    lireTable_('Commentaires').forEach(function (c) {
+      if (c.kraaft && c.auteur === ancien + ' (Kraaft)') { update_('Commentaires', 'id', c.id, { auteur: nom + ' (Kraaft)' }); corriges++; }
+    });
+  });
+  ecrireAuteursKraaft_(auteurs);
+  props.setProperty('KRAAFT_INCONNUS', JSON.stringify(inconnus));
+  return { corriges: corriges };
+}
+
+/** Active ou coupe la synchronisation horaire (nouveaux messages Kraaft → appli) */
+function reglerSyncKraaft_(d) {
+  const props = PropertiesService.getScriptProperties();
+  if (d.actif === 'oui') {
+    kraaftEspace_();
+    props.setProperty('KRAAFT_SYNC', 'oui');
+    if (!props.getProperty('KRAAFT_CURSEUR')) props.setProperty('KRAAFT_CURSEUR', new Date().toISOString());
+  } else {
+    props.deleteProperty('KRAAFT_SYNC');
+  }
+  return { sync: props.getProperty('KRAAFT_SYNC') === 'oui' };
+}
+
+/** Lancé chaque heure : reprend les nouveaux messages des conversations Kraaft déjà reliées à un dossier */
+function syncKraaft_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('KRAAFT_SYNC') !== 'oui' || !props.getProperty('KRAAFT_CLE')) return;
+  const ws = props.getProperty('KRAAFT_WS');
+  const parRoom = {};
+  all_('Dossiers').forEach(function (x) { if (x.kraaft) parRoom[x.kraaft] = x.id; });
+  const auteurs = auteursKraaft_();
+  const inconnus = JSON.parse(props.getProperty('KRAAFT_INCONNUS') || '{}');
+  let curseur = props.getProperty('KRAAFT_CURSEUR') || new Date().toISOString();
+  const aReprendre = {};
+  for (let i = 0; i < 10; i++) {
+    const r = kraaftApi_('workspaces/' + ws + '/rooms/messages/events', { limit: 500, after: curseur });
+    (r.json || []).forEach(function (ev) {
+      if (ev.event !== 'sent' || !parRoom[ev.roomId] || !ev.message || !ev.message.after) return;
+      (aReprendre[ev.roomId] = aReprendre[ev.roomId] || []).push(
+        messageKraaft_(ev.roomId, ev.messageId, ev.senderId, ev.occurredAt, ev.message.after, auteurs, inconnus));
+      curseur = ev.flake || curseur;
+    });
+    if (r.suite) curseur = r.suite;
+    if (!r.encore) break;
+  }
+  props.setProperty('KRAAFT_CURSEUR', curseur);
+  props.setProperty('KRAAFT_INCONNUS', JSON.stringify(inconnus));
+  const robot = { email: '', nom: 'Synchronisation Kraaft', role: 'admin' };
+  Object.keys(aReprendre).forEach(function (roomId) {
+    const res = importKraaft_({ dossierId: parRoom[roomId], messages: aReprendre[roomId] }, robot);
+    if (res.ajoutes) majDossier_(parRoom[roomId], {});
+  });
 }
 
 function importKraaft_(d, user) {

@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-12 n°16';
+  const VERSION_ECRANS = '2026-11-12 n°17';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -1870,12 +1870,109 @@
       '<div class="actions"><button class="btn" data-act="kraaftCle">Enregistrer la clé</button>' +
       (S.data.reglages.kraaftOk === 'oui' ? '<button class="btn" data-act="kraaftExplorer">Tester et explorer Kraaft</button>' : '') + '</div>' +
       '<pre id="kraaft-explo" class="small" style="white-space:pre-wrap;max-height:360px;overflow:auto" hidden></pre>' +
+      (S.data.reglages.kraaftOk === 'oui' ? '<h3 style="margin:12px 0 4px">Reprise des chantiers Kraaft</h3>' +
+        '<p class="small muted" style="margin:0 0 6px">Non-Assigné → Devis à faire · En cours → Chantier en cours · Terminé → Facturé (archives). ' +
+        'Les messages, photos et fichiers gardent leur auteur et leur date. Un chantier déjà repris est seulement complété.</p>' +
+        '<div id="kraaft-api"><div class="actions"><button class="btn primary" data-act="kraaftCharger">Afficher les chantiers Kraaft</button></div></div>' : '') +
       '<h3 style="margin:12px 0 4px">Reprise par fichier</h3>' +
       '<label class="field"><span>Fichier de reprise Kraaft (.json)</span><input type="file" id="kraaft-fichier" accept=".json,application/json"></label>' +
       '<label class="field"><span>Dossier de l\'appli à compléter</span><select id="kraaft-dossier"><option value="">Choisir un dossier…</option>' +
       ds.map((d) => '<option value="' + esc(d.id) + '">' + esc(nomClient(d)) + (d.lieu ? ' · ' + esc(d.lieu) : '') + '</option>').join('') + '</select></label>' +
       '<p class="small muted" id="kraaft-etat"></p>' +
       '<div class="actions"><button class="btn primary" data-act="kraaftImport">Lancer la reprise</button></div></div>';
+  }
+
+  /* ---------- Reprise Kraaft par l'API ---------- */
+  const KRAAFT = { liste: null, enCours: false, message: '' };
+
+  function dessinerKraaftApi() {
+    const L = KRAAFT.liste;
+    const zone = $('#kraaft-api');
+    if (!zone || !L) return;
+    const statuts = ['Non-Assigné', 'En cours', 'Terminé'];
+    const nb = (st) => L.conversations.filter((c) => c.statut === st).length;
+    const inconnus = Object.keys(L.inconnus || {});
+    const connus = Object.keys(L.auteurs || {});
+    zone.innerHTML =
+      '<p class="small" style="margin:0 0 6px"><strong>' + L.conversations.length + '</strong> chantiers dans Kraaft · ' +
+        L.conversations.filter((c) => c.dossierId).length + ' déjà dans l\'appli</p>' +
+      '<div class="actions" style="margin:0 0 6px">' + statuts.map((st) => '<label class="check" style="margin:0 10px 0 0"><input type="checkbox" class="kraaft-filtre" value="' + esc(st) + '" checked> ' + esc(st) + ' (' + nb(st) + ')</label>').join('') +
+        '<label class="check" style="margin:0"><input type="checkbox" id="kraaft-masquer" checked> Masquer ceux déjà repris</label></div>' +
+      '<input type="search" id="kraaft-cherche" placeholder="Filtrer par nom…" autocomplete="off" style="margin-bottom:8px">' +
+      '<ul class="mini-list" id="kraaft-liste" style="max-height:340px;overflow-y:auto;margin:0 0 8px">' +
+        L.conversations.map((c) => '<li data-statut="' + esc(c.statut) + '" data-repris="' + (c.dossierId ? 'oui' : 'non') + '" data-cherche="' + esc(sansAccent(c.titre + ' ' + c.description)) + '">' +
+          '<label class="check" style="margin:0"><input type="checkbox" name="kraaftRoom" value="' + esc(c.roomId) + '"> <span><strong>' + esc(c.titre) + '</strong>' +
+          (c.description ? ' – ' + esc(c.description) : '') + ' <span class="muted small">· ' + esc(c.statut) + (c.creee ? ' · ' + fr(c.creee.slice(0, 10)) : '') +
+          (c.dossierId ? ' · ✅ dans l\'appli' : '') + '</span></span></label></li>').join('') + '</ul>' +
+      '<div class="actions"><button class="btn" data-act="kraaftCocher">Cocher ceux affichés</button>' +
+        '<button class="btn primary" data-act="kraaftReprendre">Reprendre les chantiers cochés (<span id="kraaft-nb">0</span>)</button></div>' +
+      '<p class="small" id="kraaft-progres">' + esc(KRAAFT.message || '') + '</p>' +
+      '<h3 style="margin:14px 0 4px">Noms des personnes Kraaft</h3>' +
+      '<p class="small muted" style="margin:0 0 6px">Kraaft ne donne pas les noms, seulement des numéros. Les noms sont appris tout seuls quand c\'est possible ; ' +
+        'sinon, les messages portent « Membre Kraaft xxxx » en attendant que vous indiquiez qui c\'est (l\'exemple aide à reconnaître la personne). Les messages déjà repris sont corrigés.</p>' +
+      (inconnus.length || connus.length ? '<ul class="mini-list" style="margin:0 0 8px">' +
+        inconnus.map((id) => '<li><label class="field" style="margin:0"><span>' + esc('Membre Kraaft ' + id.slice(-4)) +
+          ' <span class="muted small">— ex. : « ' + esc((L.inconnus[id] || {}).exemple || '…') + ' »</span></span><input type="text" data-auteur="' + esc(id) + '" placeholder="Nom et prénom"></label></li>').join('') +
+        connus.map((id) => '<li><label class="field" style="margin:0"><span>' + esc(L.auteurs[id]) + ' <span class="muted small">(…' + esc(id.slice(-4)) + ')</span></span>' +
+          '<input type="text" data-auteur="' + esc(id) + '" placeholder="Changer le nom"></label></li>').join('') + '</ul>' +
+        '<div class="actions"><button class="btn" data-act="kraaftNoms">Enregistrer les noms</button></div>'
+        : '<p class="small muted">Aucune personne repérée pour l\'instant : elles apparaîtront après la première reprise.</p>') +
+      '<h3 style="margin:14px 0 4px">Synchronisation</h3>' +
+      '<label class="check"><input type="checkbox" id="kraaft-sync"' + (L.sync ? ' checked' : '') + '> Chaque heure, reprendre les nouveaux messages et photos postés dans Kraaft sur les chantiers déjà repris</label>';
+    const filtrer = () => {
+      const st = Array.from(document.querySelectorAll('.kraaft-filtre:checked')).map((x) => x.value);
+      const masquer = $('#kraaft-masquer').checked;
+      const mots = sansAccent($('#kraaft-cherche').value).split(/\s+/).filter(Boolean);
+      document.querySelectorAll('#kraaft-liste li').forEach((li) => {
+        li.hidden = st.indexOf(li.dataset.statut) < 0 || (masquer && li.dataset.repris === 'oui') || !mots.every((m) => li.dataset.cherche.indexOf(m) >= 0);
+      });
+    };
+    document.querySelectorAll('.kraaft-filtre, #kraaft-masquer').forEach((x) => { x.onchange = filtrer; });
+    $('#kraaft-cherche').oninput = filtrer;
+    $('#kraaft-liste').onchange = majCompteKraaft;
+    $('#kraaft-sync').onchange = (ev) => essayer(async () => {
+      const r = (await api('kraaftSync', { actif: ev.target.checked ? 'oui' : 'non' })).resultat || {};
+      L.sync = r.sync;
+      toast(r.sync ? 'Synchronisation Kraaft activée (chaque heure)' : 'Synchronisation Kraaft arrêtée');
+    });
+    filtrer();
+  }
+
+  function majCompteKraaft() {
+    const n = document.querySelectorAll('[name=kraaftRoom]:checked').length;
+    if ($('#kraaft-nb')) $('#kraaft-nb').textContent = n;
+  }
+
+  async function lancerRepriseApi(convs) {
+    if (KRAAFT.enCours) return;
+    KRAAFT.enCours = true;
+    const etat = (t, err) => { KRAAFT.message = t; const p = $('#kraaft-progres'); if (p) { p.textContent = t; p.style.color = err ? 'var(--danger, #b42318)' : ''; } };
+    let ajoutes = 0;
+    const soucis = [];
+    try {
+      for (let i = 0; i < convs.length; i++) {
+        const c = convs[i];
+        let tour = 0;
+        for (;;) {
+          etat('Chantier ' + (i + 1) + ' / ' + convs.length + ' : ' + c.titre + (tour ? ' (suite)' : '') + '…');
+          let r;
+          try {
+            r = (await api('kraaftReprendre', { roomId: c.roomId, titre: c.titre, statut: c.statut, description: c.description, lat: c.lat, lng: c.lng, creee: c.creee })).resultat || {};
+          } catch (e) { soucis.push(c.titre + ' : ' + e.message); break; }
+          ajoutes += r.ajoutes || 0;
+          c.dossierId = r.dossierId;
+          if (r.erreurs && r.erreurs.length) soucis.push(c.titre + ' : ' + r.erreurs.length + ' fichier(s) à reprendre');
+          if (!(r.stop >= 0) || ++tour > 15) break;
+        }
+      }
+      etat('Reprise terminée : ' + convs.length + ' chantier(s), ' + ajoutes + ' message(s) et fichier(s) ajouté(s).' +
+        (soucis.length ? ' À relancer : ' + soucis.join(' ; ') : ''), !!soucis.length);
+      toast('Reprise Kraaft terminée');
+      KRAAFT.liste = (await api('kraaftConversations', {})).resultat;
+      await afficher();
+    } finally {
+      KRAAFT.enCours = false;
+    }
   }
 
   /** Lit le fichier de reprise Kraaft choisi et présélectionne le dossier du même nom */
@@ -2758,7 +2855,7 @@
     kraaftCle: () => essayer(async () => {
       const cle = ($('#kraaft-cle').value || '').trim();
       if (!cle) { toast('Collez d\'abord la clé API Kraaft.', true); return; }
-      const r = await api('kraaftCle', { cle });
+      const r = (await api('kraaftCle', { cle })).resultat || {};
       toast('Clé Kraaft enregistrée et vérifiée' + (r.espace ? ' (espace « ' + r.espace + ' »)' : ''));
       await afficher();
     }),
@@ -2766,8 +2863,36 @@
       const zone = $('#kraaft-explo');
       zone.hidden = false;
       zone.textContent = 'Lecture de Kraaft en cours…';
-      const r = await api('kraaftExplorer', {});
+      const r = (await api('kraaftExplorer', {})).resultat;
       zone.textContent = JSON.stringify(r, null, 2);
+    }),
+    kraaftCharger: () => essayer(async () => {
+      const zone = $('#kraaft-api');
+      zone.innerHTML = '<p class="muted small">Lecture des chantiers Kraaft…</p>';
+      KRAAFT.liste = (await api('kraaftConversations', {})).resultat;
+      dessinerKraaftApi();
+    }),
+    kraaftCocher: () => {
+      document.querySelectorAll('#kraaft-liste li').forEach((li) => { if (!li.hidden) $('input', li).checked = true; });
+      majCompteKraaft();
+    },
+    kraaftReprendre: () => {
+      const ids = Array.from(document.querySelectorAll('[name=kraaftRoom]:checked')).map((x) => x.value);
+      if (!ids.length) { toast('Cochez d\'abord les chantiers à reprendre.', true); return; }
+      const convs = KRAAFT.liste.conversations.filter((c) => ids.indexOf(c.roomId) >= 0);
+      FORMS.confirmer('Reprendre ' + convs.length + ' chantier(s) Kraaft ?',
+        'Les dossiers seront créés dans l\'appli (ou complétés s\'ils existent déjà), avec les messages, photos et fichiers. ' +
+        'Comptez environ une minute par chantier avec beaucoup de photos. <strong>Gardez cette page ouverte</strong> jusqu\'à la fin. Aucun mail ne part.',
+        'Lancer la reprise', () => { setTimeout(() => essayer(() => lancerRepriseApi(convs)), 0); });
+    },
+    kraaftNoms: () => essayer(async () => {
+      const noms = {};
+      document.querySelectorAll('[data-auteur]').forEach((i) => { if (i.value.trim()) noms[i.dataset.auteur] = i.value.trim(); });
+      if (!Object.keys(noms).length) { toast('Indiquez au moins un nom.', true); return; }
+      const r = (await api('kraaftAuteurs', { noms })).resultat || {};
+      toast('Noms enregistrés' + (r.corriges ? ' (' + r.corriges + ' message(s) corrigé(s))' : ''));
+      KRAAFT.liste = (await api('kraaftConversations', {})).resultat;
+      dessinerKraaftApi();
     }),
     kraaftImport: () => essayer(async () => {
       const k = await lireFichierKraaft();
@@ -2906,6 +3031,7 @@
         });
       }
     }
+    if (page === 'reglages' && KRAAFT.liste && $('#kraaft-api')) dessinerKraaftApi();
     if (page === 'reglages' && $('#suppr-cherche')) {
       $('#suppr-cherche').oninput = (ev) => {
         const mots = sansAccent(ev.target.value).split(/\s+/).filter(Boolean);
