@@ -62,7 +62,7 @@
   };
   const prenom = (email) => String(nomUser(email) || '').split(' ')[0];
   // À changer en même temps que VERSION_PROGRAMME dans Code.gs
-  const VERSION_ECRANS = '2026-11-12 n°14';
+  const VERSION_ECRANS = '2026-11-12 n°15';
   const moi = () => S.data.user.email;
   /** Commande réellement passée (pas une simple demande de matériel d'un technicien) */
   const passee = (c) => c.statut !== 'demandee';
@@ -1834,10 +1834,26 @@
       '<div style="overflow-x:auto"><table class="users"><thead><tr><th>Adresse Gmail</th><th>Nom</th><th>Rôle</th><th>Téléphone</th><th>SMS</th><th title="Appareils qui reçoivent les notifications">🔔</th><th>Actif</th><th></th></tr></thead><tbody id="users-body">' + users + '</tbody></table></div>' +
       '<div class="actions" style="margin-top:12px"><button class="btn" data-act="addUser">+ Ajouter une personne</button><button class="btn primary" data-act="saveUsers">Enregistrer les utilisateurs</button></div></div>' +
 
+      blocSuppression() +
       '<div class="card"><h2>Données de démonstration</h2><p class="muted small" style="margin-top:0">Neuf dossiers fictifs à toutes les étapes, avec quelques présences et absences pour les deux premiers techniciens. Ils sont marqués « démo » et se suppriment d\'un clic sans toucher aux vraies données.</p>' +
       '<div class="actions"><button class="btn" data-act="demoCharger">Charger la démo</button><button class="btn danger" data-act="demoSupprimer">Supprimer la démo</button></div></div>' +
 
       blocKraaft();
+  }
+
+  /** Réglages : supprimer plusieurs dossiers d'un coup (dossiers d'essai, doublons…) */
+  function blocSuppression() {
+    const ds = S.data.dossiers.slice().sort((a, b) => ((b.dateRdv || '') < (a.dateRdv || '') ? -1 : 1));
+    const lignes = ds.map((d) => '<li data-cherche="' + esc(sansAccent([nomClient(d), d.chantier, d.lieu, d.numDevis, ETAPES()[d.etape]].join(' '))) + '">' +
+      '<label class="check" style="margin:0"><input type="checkbox" name="supprDos" value="' + esc(d.id) + '"> <span><strong>' + esc(nomClient(d)) + '</strong>' +
+      (d.chantier ? ' – ' + esc(d.chantier) : '') + (d.demo === 'oui' ? ' <span class="pill">démo</span>' : '') +
+      ' <span class="muted small">· ' + esc(ETAPES()[d.etape] || d.etape) + (d.dateRdv ? ' · ' + fr(d.dateRdv) : '') + '</span></span></label></li>').join('');
+    return '<div class="card"><h2>Supprimer des dossiers</h2><p class="muted small" style="margin-top:0">Pour faire le ménage après les essais : cochez les dossiers à effacer complètement. ' +
+      'Une confirmation vous sera demandée. Pour un seul dossier, le bouton « Supprimer le dossier » est aussi en bas de sa fiche.</p>' +
+      (ds.length ? '<input type="search" id="suppr-cherche" placeholder="Filtrer : nom, chantier, commune, étape…" autocomplete="off" style="margin-bottom:8px">' +
+        '<ul class="mini-list" id="suppr-liste" style="max-height:320px;overflow-y:auto;margin:0 0 10px">' + lignes + '</ul>' +
+        '<div class="actions"><button class="btn" data-act="supprToutCocher">Cocher ceux affichés</button><button class="btn danger" data-act="supprSelection">Supprimer les dossiers cochés</button></div>'
+        : '<p class="muted">Aucun dossier.</p>') + '</div>';
   }
 
   /** Reprise Kraaft : reprend dans un dossier la discussion et les documents d'une conversation Kraaft */
@@ -2381,6 +2397,31 @@
     confirmer(titre, texte, bouton, fn, classe) {
       fenetre({ titre, corps: '<p>' + texte + '</p>', bouton, classe: classe || 'primary', valider: fn });
     },
+    /** Suppression d'un ou plusieurs dossiers complets, avec double confirmation */
+    suppression(dossiers) {
+      const n = dossiers.length;
+      const liste = dossiers.slice(0, 12).map((d) => '<li>' + esc(nomClient(d)) + (d.chantier ? ' – ' + esc(d.chantier) : '') + ' <span class="muted small">(' + esc(ETAPES()[d.etape] || d.etape) + ')</span></li>').join('') +
+        (n > 12 ? '<li class="muted">… et ' + (n - 12) + ' autre(s)</li>' : '');
+      fenetre({
+        titre: n > 1 ? 'Supprimer ' + n + ' dossiers ?' : 'Supprimer ce dossier ?',
+        corps: '<ul class="mini-list" style="margin:0 0 10px">' + liste + '</ul>' +
+          '<p>Tout ce qui est rattaché ' + (n > 1 ? 'à ces dossiers' : 'à ce dossier') + ' sera effacé de l\'appli : discussion, documents, commandes de matériel, factures et interventions (elles sont aussi retirées de l\'agenda). <strong>Ce n\'est pas récupérable dans l\'appli.</strong></p>' +
+          '<label class="check" style="margin:4px 0 12px"><input type="checkbox" name="fichiers" value="oui" checked> <span>Mettre aussi les photos et documents à la corbeille de Google Drive <span class="muted small">(récupérables pendant 30 jours)</span></span></label>' +
+          champ('Motif *', '<textarea name="motif" rows="2" placeholder="Ex. : dossier créé pendant les essais"></textarea>', 'Il sera noté dans l\'historique.') +
+          champ('Pour confirmer, tapez ' + (n > 1 ? 'le nombre de dossiers : <strong>' + n + '</strong>' : '<strong>SUPPRIMER</strong>') + ' *', '<input type="text" name="confirmation" autocomplete="off">'),
+        bouton: n > 1 ? 'Supprimer les ' + n + ' dossiers' : 'Supprimer définitivement',
+        classe: 'danger',
+        valider: async (v) => {
+          if (!v.motif) throw new Error('Indiquez le motif.');
+          const attendu = n > 1 ? String(n) : 'SUPPRIMER';
+          if (String(v.confirmation || '').trim().toUpperCase() !== attendu) throw new Error('Tapez exactement « ' + attendu + ' » pour confirmer.');
+          const fichiers = v.fichiers === 'oui' ? 'oui' : 'non';
+          if (n === 1) await agir('supprimerDossier', { id: dossiers[0].id, motif: v.motif, fichiers }, 'Dossier supprimé');
+          else await agir('supprimerDossiers', { ids: dossiers.map((d) => d.id), nombre: n, motif: v.motif, fichiers }, n + ' dossiers supprimés');
+          if (/^#\/(dossier|terrain)\//.test(location.hash)) location.hash = '#/';
+        }
+      });
+    },
     /** Confirmation avec motif obligatoire, gardé dans l'historique */
     avecMotif(titre, texte, bouton, fn, classe) {
       fenetre({
@@ -2619,8 +2660,15 @@
     nouveau: () => FORMS.nouveau(),
     supprDossier: (el) => {
       const d = parId(el.dataset.id);
-      FORMS.avecMotif('Supprimer ce dossier ?', 'Le dossier <strong>' + esc(nomClient(d)) + '</strong> sera supprimé avec ses commandes, factures et commentaires. Les fichiers déjà rangés dans Google Drive sont conservés. <strong>Cette action est définitive.</strong>',
-        'Supprimer définitivement', async (motif) => { await agir('supprimerDossier', { id: d.id, motif }, 'Dossier supprimé'); location.hash = '#/'; }, 'danger');
+      FORMS.suppression([d]);
+    },
+    supprSelection: () => {
+      const ids = Array.from(document.querySelectorAll('[name=supprDos]:checked')).map((x) => x.value);
+      if (!ids.length) { toast('Cochez d\'abord les dossiers à supprimer.', true); return; }
+      FORMS.suppression(ids.map(parId).filter(Boolean));
+    },
+    supprToutCocher: () => {
+      document.querySelectorAll('#suppr-liste li').forEach((li) => { if (!li.hidden) $('input', li).checked = true; });
     },
     supprCommande: (el) => {
       const c = S.data.commandes.find((x) => x.id === el.dataset.id);
@@ -2835,6 +2883,12 @@
           S.dossier.dossier.avancement = r.value;
         });
       }
+    }
+    if (page === 'reglages' && $('#suppr-cherche')) {
+      $('#suppr-cherche').oninput = (ev) => {
+        const mots = sansAccent(ev.target.value).split(/\s+/).filter(Boolean);
+        document.querySelectorAll('#suppr-liste li').forEach((li) => { li.hidden = !mots.every((m) => li.dataset.cherche.indexOf(m) >= 0); });
+      };
     }
     if (page === 'reglages' && $('#f-reglages')) {
       $('#f-reglages').onsubmit = (ev) => {

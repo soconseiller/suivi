@@ -25,7 +25,7 @@ const CONFIG = {
 
 const NOM_APPLI = 'Elec Habitat';
 // Numéro de version, affiché en bas du menu de l'appli (pour vérifier que le dernier déploiement est en service)
-const VERSION_PROGRAMME = '2026-11-12 n°14';
+const VERSION_PROGRAMME = '2026-11-12 n°15';
 
 /* ==================================================================
  * 1. STRUCTURE DES DONNÉES
@@ -447,6 +447,7 @@ function router_(action, d, user) {
     etapePrecedente: function () { return etapePrecedente_(d, user); },
     creerDossier: function () { return creerDossier_(d, user); },
     supprimerDossier: function () { return supprimerDossier_(d, user); },
+    supprimerDossiers: function () { return supprimerDossiers_(d, user); },
     supprimerCommande: function () { return supprimerCommande_(d, user); },
     receptionCommande: function () { return receptionCommande_(d, user); },
     enregistrerPV: function () { return enregistrerPV_(d, user); },
@@ -1302,12 +1303,40 @@ function creerDossier_(d, user) {
 function supprimerDossier_(d, user) {
   const dos = dossierOuErreur_(d.id);
   const motif = motifObligatoire_(d);
+  effacerDossier_(dos, user, motif, d.fichiers === 'oui');
+}
+
+/** Supprime plusieurs dossiers d'un coup (réservé aux administrateurs) */
+function supprimerDossiers_(d, user) {
+  const motif = motifObligatoire_(d);
+  const ids = (d.ids || []).map(String).filter(Boolean);
+  if (!ids.length) throw erreur_('Cochez au moins un dossier.');
+  if (ids.length > 100) throw erreur_('100 dossiers au maximum à la fois.');
+  if (Number(d.nombre) !== ids.length) throw erreur_('Le nombre tapé ne correspond pas au nombre de dossiers cochés (' + ids.length + ').');
+  let n = 0;
+  ids.forEach(function (id) {
+    const dos = trouver_('Dossiers', 'id', id);
+    if (!dos) return;
+    effacerDossier_(dos, user, motif, d.fichiers === 'oui');
+    n++;
+  });
+  return { supprimes: n };
+}
+
+/** Efface un dossier et tout ce qui lui est rattaché ; ses fichiers Drive vont à la corbeille si demandé (récupérables 30 jours) */
+function effacerDossier_(dos, user, motif, fichiers) {
   supprimerInterventions_(dos.id);
+  if (fichiers) {
+    all_('Documents').concat(all_('Commentaires')).forEach(function (x) {
+      if (x.dossierId === dos.id && x.fichier) { try { DriveApp.getFileById(x.fichier).setTrashed(true); } catch (e) { /* déjà retiré */ } }
+    });
+    if (dos.dossierDrive) { try { DriveApp.getFolderById(dos.dossierDrive).setTrashed(true); } catch (e) { /* déjà retiré */ } }
+  }
   ['Commandes', 'Factures', 'Commentaires', 'Documents'].forEach(function (name) {
-    all_(name).forEach(function (x) { if (x.dossierId === dos.id) delete_(name, 'id', x.id); });
+    supprimerLignes_(name, function (x) { return x.dossierId === dos.id; });
   });
   delete_('Dossiers', 'id', dos.id);
-  log_(dos.id, user, 'Dossier supprimé', (dos.client || dos.titreRdv) + ' – ' + motif);
+  log_(dos.id, user, 'Dossier supprimé', (dos.client || dos.titreRdv) + ' – ' + motif + (fichiers ? ' (fichiers mis à la corbeille)' : ''));
 }
 
 function supprimerCommande_(d, user) {
@@ -3387,6 +3416,15 @@ function update_(name, champ, valeur, patch) {
   const headers = SCHEMA[name];
   const row = headers.map(function (h) { return patch[h] !== undefined ? String(patch[h]) : r[h]; });
   sheet_(name).getRange(r._row, 1, 1, headers.length).setValues([row]);
+  delete CACHE_[name];
+}
+
+/** Supprime d'un coup toutes les lignes d'une feuille qui répondent au test (du bas vers le haut) */
+function supprimerLignes_(name, test) {
+  const lignes = lireTable_(name).filter(test).map(function (x) { return x._row; }).sort(function (a, b) { return b - a; });
+  if (!lignes.length) return;
+  const sh = sheet_(name);
+  lignes.forEach(function (r) { sh.deleteRow(r); });
   delete CACHE_[name];
 }
 
