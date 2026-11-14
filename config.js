@@ -8,13 +8,13 @@ self.SUIVI_CONFIG = {  // « self » : lisible par les écrans et par sw.js
   // Notifications sur les téléphones (Firebase) — voir le guide « Notifications »
   // Firebase > Paramètres du projet > Général > Vos applications > Configuration du SDK
   FIREBASE: {
-    apiKey: 'AIzaSyAReb7tQSm75ptiN7D2x0jTJLwKqygLy64',
-    authDomain: 'suivi-elec-514013.firebaseapp.com',
-    projectId: 'suivi-elec-514013',
-    storageBucket: 'suivi-elec-514013.firebasestorage.app',
-    messagingSenderId: '874401973638',
-    appId: '1:874401973638:web:eb6da2abab4dcab8761807'
+    apiKey: 'AIzaSyBvc931kRP6jIM-5793m9cumATeu0UHHDs',
+    authDomain: 'suivi-elec-habitat.firebaseapp.com',
+    projectId: 'suivi-elec-habitat',
+    storageBucket: 'suivi-elec-habitat.firebasestorage.app',
+    messagingSenderId: '986194509339',
+    appId: '1:986194509339:web:49bde50a2e6c52b67cc2be'
   },
   // Firebase > Paramètres du projet > Cloud Messaging > Certificats Web Push > Paire de clés
-  VAPID_KEY: 'BB4CM4nsRCn_mEnw4mbrJqRCs32Z91mBByBwqbz_cntkXYrJ89NQ_aSKMjHUNtdsySkzxclvld_P4HAPGq9N_zE'
+  VAPID_KEY: 'BBXe53h4wDhibqa5qKEZkz22am3LOBjXIAIOnZ3gwdLUNonsZGhGKmOGXDPRAfVeERqGr5JQJDIHNRk6GV0-ioo'
 };

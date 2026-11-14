@@ -4,7 +4,7 @@
  *  - ouvre la bonne page de l'appli quand on touche une notification.
  * Ce fichier doit rester à la racine du site (à côté de index.html).
  */
-const VERSION_CACHE = 'eh-2026-11-11-2';
+const VERSION_CACHE = 'eh-2026-11-14-1';
 // Le site enlève « .html » des adresses (réglage cleanUrls de Vercel) : on demande donc « / » et « /hors-ligne »
 const FICHIERS = ['/', '/app.js', '/styles.css', '/config.js', '/logo.png', '/favicon.svg',
   '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/manifest.json', '/hors-ligne'];
